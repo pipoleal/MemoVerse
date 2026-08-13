@@ -76,7 +76,7 @@ class Payment(models.Model):
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     external_reference = models.CharField(max_length=128, unique=True)
-    idempotency_key = models.CharField(max_length=64, unique=True)
+    idempotency_key = models.CharField(max_length=128, unique=True)
     mp_order_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
     mp_payment_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
     last_sync_payload = models.JSONField(null=True, blank=True)
