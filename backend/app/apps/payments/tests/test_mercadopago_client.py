@@ -35,6 +35,10 @@ class _FakeOrderResource:
         self.calls.append({"order_payload": order_payload, "request_options": request_options})
         return MPResponse({"status": self.status, "response": self.response_body})
 
+    def get(self, order_id, request_options):
+        self.calls.append({"order_id": order_id, "request_options": request_options})
+        return MPResponse({"status": self.status, "response": self.response_body})
+
     @property
     def last_call(self):
         return self.calls[-1]
@@ -187,3 +191,61 @@ class MercadoPagoClientErrorHandlingTests(TestCase):
         for record in captured.records:
             self.assertNotIn(secret_token, record.getMessage())
             self.assertNotIn(secret_token, str(record.__dict__))
+
+
+class MercadoPagoClientGetOrderTests(TestCase):
+    """Fase 4: consulta real da Order, usada pela confirmação server-side —
+    nunca decidimos um Payment aprovado a partir só do payload do webhook."""
+
+    def test_requests_the_given_order_id(self):
+        order_resource = _FakeOrderResource(response_body=SAMPLE_ORDER_RESPONSE, status=200)
+        client = make_client(order_resource)
+
+        client.get_order(order_id="ORD01TEST")
+
+        self.assertEqual(order_resource.last_call["order_id"], "ORD01TEST")
+
+    def test_returns_normalized_result(self):
+        order_resource = _FakeOrderResource(response_body=SAMPLE_ORDER_RESPONSE, status=200)
+        client = make_client(order_resource)
+
+        result = client.get_order(order_id="ORD01TEST")
+
+        self.assertIsInstance(result, MercadoPagoOrderResult)
+        self.assertEqual(result.order_id, "ORD01TEST")
+        self.assertEqual(result.status, "action_required")
+        self.assertEqual(result.status_detail, "waiting_transfer")
+        self.assertEqual(result.payment_id, "PAY01TEST")
+        self.assertEqual(result.raw, SAMPLE_ORDER_RESPONSE)
+
+    def test_order_not_found_raises_gateway_error(self):
+        order_resource = _FakeOrderResource(
+            response_body={"message": "Order not found", "error": "not_found"}, status=404
+        )
+        client = make_client(order_resource)
+
+        with self.assertRaises(MercadoPagoGatewayError) as ctx:
+            client.get_order(order_id="ORD-DOES-NOT-EXIST")
+
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_response_without_order_id_raises_response_error(self):
+        order_resource = _FakeOrderResource(response_body={"status": "created"}, status=200)
+        client = make_client(order_resource)
+
+        with self.assertRaises(MercadoPagoResponseError):
+            client.get_order(order_id="ORD01TEST")
+
+    def test_access_token_never_appears_in_logs_on_get_order_failure(self):
+        secret_token = "APP_USR-SECRET-VALUE-DO-NOT-LEAK"
+        order_resource = _FakeOrderResource(
+            response_body={"message": "erro interno", "error": "server_error"}, status=500
+        )
+        client = make_client(order_resource, access_token=secret_token)
+
+        with self.assertLogs("apps.payments.services.mercadopago_client", level="WARNING") as captured:
+            with self.assertRaises(MercadoPagoGatewayError):
+                client.get_order(order_id="ORD01TEST")
+
+        for record in captured.records:
+            self.assertNotIn(secret_token, record.getMessage())

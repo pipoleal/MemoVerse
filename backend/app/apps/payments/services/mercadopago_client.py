@@ -167,18 +167,62 @@ class MercadoPagoClient:
             )
             raise MercadoPagoGatewayError("Falha de comunicação com a Mercado Pago.") from exc
 
-        body = result["response"] or {}
-        order_id = body.get("id")
-        if not order_id:
-            raise MercadoPagoResponseError("Resposta da Mercado Pago não contém o id da Order.")
+        return _parse_order_response(result["response"] or {})
 
-        order_payments = (body.get("transactions") or {}).get("payments") or []
-        payment_id = order_payments[0].get("id") if order_payments else None
+    def get_order(self, *, order_id: str) -> MercadoPagoOrderResult:
+        """Consulta uma Order existente (`GET /v1/orders/{id}`).
 
-        return MercadoPagoOrderResult(
-            order_id=order_id,
-            status=body.get("status"),
-            status_detail=body.get("status_detail"),
-            payment_id=payment_id,
-            raw=body,
-        )
+        Usado pela confirmação server-side de pagamento (Fase 4): o backend
+        nunca decide um Payment como aprovado a partir do payload de um
+        webhook — sempre busca aqui o estado real, autenticado com o Access
+        Token do servidor, antes de aplicar qualquer mudança de status.
+        """
+
+        request_options = RequestOptions(access_token=self._access_token)
+
+        try:
+            result = self._sdk.order().get(order_id, request_options)
+            result.raise_for_status()
+        except MercadoPagoSDKError as exc:
+            logger.warning(
+                "Mercado Pago recusou a consulta da Order",
+                extra=_sanitize_for_log(
+                    status_code=getattr(exc, "status_code", None),
+                    mp_error_code=getattr(exc, "error", None),
+                    detail=getattr(exc, "message", None),
+                ),
+            )
+            raise MercadoPagoGatewayError(
+                f"Mercado Pago recusou a consulta da Order (status={getattr(exc, 'status_code', None)}).",
+                status_code=getattr(exc, "status_code", None),
+                mp_error_code=getattr(exc, "error", None),
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            logger.warning(
+                "Falha de transporte ao consultar a Order na Mercado Pago",
+                extra=_sanitize_for_log(status_code=None, mp_error_code=None, detail=type(exc).__name__),
+            )
+            raise MercadoPagoGatewayError("Falha de comunicação com a Mercado Pago.") from exc
+
+        return _parse_order_response(result["response"] or {})
+
+
+def _parse_order_response(body: dict) -> MercadoPagoOrderResult:
+    """Normaliza o corpo de uma resposta de Order (criação ou consulta) em
+    um MercadoPagoOrderResult. Único ponto de verdade sobre onde, dentro do
+    JSON da Mercado Pago, cada campo que o domínio precisa realmente vive."""
+
+    order_id = body.get("id")
+    if not order_id:
+        raise MercadoPagoResponseError("Resposta da Mercado Pago não contém o id da Order.")
+
+    order_payments = (body.get("transactions") or {}).get("payments") or []
+    payment_id = order_payments[0].get("id") if order_payments else None
+
+    return MercadoPagoOrderResult(
+        order_id=order_id,
+        status=body.get("status"),
+        status_detail=body.get("status_detail"),
+        payment_id=payment_id,
+        raw=body,
+    )

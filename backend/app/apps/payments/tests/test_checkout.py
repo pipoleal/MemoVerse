@@ -298,6 +298,12 @@ class CheckoutActivePaymentReuseTests(TestCase):
 
 class CheckoutConcurrencyTests(TransactionTestCase):
     reset_sequences = False
+    # TransactionTestCase faz um flush completo do banco no teardown, o que
+    # apaga os Plans semeados pela migration 0002 (dado de migração, não de
+    # schema). serialized_rollback restaura esse estado entre testes — sem
+    # isso, uma segunda classe TransactionTestCase na mesma suíte (ex.:
+    # WebhookConcurrencyTests) encontraria a tabela de Plans vazia.
+    serialized_rollback = True
 
     def test_concurrency_does_not_create_two_active_attempts(self):
         user = make_user()

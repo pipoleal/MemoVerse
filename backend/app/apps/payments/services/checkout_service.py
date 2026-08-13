@@ -26,15 +26,7 @@ from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment, Plan
 from .mercadopago_client import MercadoPagoClient, MercadoPagoClientError
-
-# Respostas de Order da Mercado Pago que mapeamos para o Payment. Qualquer
-# status não listado aqui (ex.: "created") mantém o Payment como já estava —
-# não inventamos estados novos além dos definidos em Payment.Status.
-_MP_ORDER_STATUS_TO_PAYMENT_STATUS = {
-    "action_required": Payment.Status.ACTION_REQUIRED,
-    "processing": Payment.Status.IN_PROCESS,
-    "processed": Payment.Status.APPROVED,
-}
+from .status_mapping import map_order_status
 
 
 class CheckoutError(Exception):
@@ -154,7 +146,7 @@ class CheckoutService:
 
         payment.mp_order_id = result.order_id
         payment.mp_payment_id = result.payment_id
-        payment.status = _MP_ORDER_STATUS_TO_PAYMENT_STATUS.get(result.status, payment.status)
+        payment.status = map_order_status(result.status) or payment.status
         payment.last_sync_payload = result.raw
         payment.save(update_fields=["mp_order_id", "mp_payment_id", "status", "last_sync_payload", "updated_at"])
 

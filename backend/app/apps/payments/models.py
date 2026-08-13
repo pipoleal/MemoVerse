@@ -105,3 +105,40 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.draft_id} attempt #{self.attempt_number} ({self.status})"
+
+
+class WebhookEvent(models.Model):
+    """Registro de idempotência das notificações Webhook da Mercado Pago.
+
+    A garantia de "nunca processar a mesma notificação duas vezes" vive no
+    banco (constraint UNIQUE em notification_id) e não em memória/cache —
+    sobrevive a reinícios do processo e é segura sob múltiplos workers.
+    """
+
+    class Status(models.TextChoices):
+        RECEIVED = "received", "Recebido"
+        PROCESSED = "processed", "Processado"
+        FAILED = "failed", "Falhou"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # ID de notificação da Mercado Pago (campo `id` do corpo do webhook).
+    notification_id = models.CharField(max_length=64, unique=True)
+    # Campo `type` do corpo do webhook (ex.: "order", "payment").
+    topic = models.CharField(max_length=50)
+    # `data.id` do webhook: o recurso a consultar na Mercado Pago.
+    resource_id = models.CharField(max_length=64)
+    payload = models.JSONField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.RECEIVED)
+    error_detail = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "payment_webhook_events"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["topic", "resource_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.topic}:{self.resource_id} ({self.notification_id})"

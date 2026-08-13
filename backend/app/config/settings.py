@@ -12,22 +12,29 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
-from decouple import config
+
+import dj_database_url
+from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 # Quick-start development settings - unsuitable for production
+#
+# All three defaults below reproduce the exact previous hardcoded local-dev
+# behavior when no environment variable is set, so nothing changes for
+# `runserver` without a `.env`. A real deployment (Render) must override
+# SECRET_KEY, DEBUG and ALLOWED_HOSTS via environment variables.
 
-SECRET_KEY = "django-insecure-**f5&8s#wb(__j1n#cqpv^s2k-ft)o&b7ee37mbk98$ja&b+dp"
+SECRET_KEY = config(
+    "SECRET_KEY", default="django-insecure-**f5&8s#wb(__j1n#cqpv^s2k-ft)o&b7ee37mbk98$ja&b+dp"
+)
 
-DEBUG = True
+DEBUG = config("DEBUG", default=True, cast=bool)
 
-ALLOWED_HOSTS = [
-    "localhost",
-    "127.0.0.1",
-]
+# Comma-separated in the environment, e.g. ALLOWED_HOSTS=my-backend.onrender.com
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
 
 # Application definition
@@ -51,6 +58,10 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves collected static files directly from the app process — no
+    # separate static host needed for this stage. Must stay right after
+    # SecurityMiddleware (WhiteNoise's own requirement).
+    "whitenoise.middleware.WhiteNoiseMiddleware",
 
     "corsheaders.middleware.CorsMiddleware",
 
@@ -83,13 +94,22 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
+#
+# DATABASE_URL (e.g. Render's managed Postgres connection string) takes
+# over when set. Without it, local dev keeps using the exact same SQLite
+# file as before — nothing about local development changes.
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+DATABASE_URL = config("DATABASE_URL", default="")
+
+if DATABASE_URL:
+    DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
 
 
 # Password validation
@@ -124,6 +144,18 @@ USE_TZ = True
 # Static files
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+STORAGES = {
+    # Unchanged Django default — kept explicit because defining STORAGES at
+    # all replaces the whole dict, not just the key(s) below.
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 
 # Email
@@ -164,6 +196,22 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 
 
+# ==========================
+# HTTPS atrás do proxy (Render)
+# ==========================
+#
+# Render (e PaaS equivalentes) terminam TLS num proxy e repassam HTTP puro
+# para o container, sinalizando o esquema original via X-Forwarded-Proto.
+# Sem isto, request.is_secure() (usado por CSRF, redirects, etc.) sempre
+# veria a conexão como insegura. Seguro de manter sempre ligado: só importa
+# quando esse header realmente vem de um proxy em que confiamos.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Vazio por padrão (nada muda localmente). Em produção, defina com a URL
+# pública real, ex.: CSRF_TRUSTED_ORIGINS=https://my-backend.onrender.com
+CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
+
+
 # Cloudflare R2 (S3-compatible storage)
 # Keep these values out of source control.  The application continues to boot
 # without them so local work that does not request an upload is unaffected.
@@ -183,3 +231,6 @@ R2_PRESIGNED_URL_TTL_SECONDS = config(
 MP_ACCESS_TOKEN = config("MP_ACCESS_TOKEN", default="")
 MP_PUBLIC_KEY = config("MP_PUBLIC_KEY", default="")
 MP_ENV = config("MP_ENV", default="sandbox")
+# Assinatura secreta usada para validar o header x-signature dos webhooks
+# (Suas integrações > Webhooks > Configurar notificação > revelar chave).
+MP_WEBHOOK_SECRET = config("MP_WEBHOOK_SECRET", default="")

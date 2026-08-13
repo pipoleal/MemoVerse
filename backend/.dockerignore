@@ -1,0 +1,8 @@
+**/__pycache__/
+**/*.py[cod]
+app/db.sqlite3
+app/staticfiles/
+.venv/
+.env
+requirements.txt
+README.md

@@ -5,6 +5,11 @@ django-filter
 
 psycopg[binary]
 
+# Parses DATABASE_URL (e.g. Render's managed Postgres) into Django's
+# DATABASES dict. Only used when DATABASE_URL is set — local dev without it
+# keeps using the SQLite config already in settings.py.
+dj-database-url
+
 python-decouple
 
 Pillow
