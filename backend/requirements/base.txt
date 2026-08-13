@@ -1,0 +1,24 @@
+Django
+djangorestframework
+django-cors-headers
+django-filter
+
+psycopg[binary]
+
+python-decouple
+
+Pillow
+
+whitenoise
+
+drf-spectacular
+
+djangorestframework-simplejwt
+
+# Cloudflare R2 exposes an S3-compatible API.  boto3 is used only by the
+# backend to mint short-lived upload URLs and verify uploaded objects.
+boto3
+
+# Official Mercado Pago SDK, used exclusively by MercadoPagoClient
+# (apps/payments/services/mercadopago_client.py) to talk to the Orders API.
+mercadopago
