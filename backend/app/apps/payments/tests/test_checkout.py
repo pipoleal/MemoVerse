@@ -373,7 +373,19 @@ class CheckoutReferenceGenerationTests(TestCase):
 
         # Simula um retry da MESMA tentativa: a idempotency_key não pode mudar.
         payment_a.refresh_from_db()
-        self.assertEqual(payment_a.idempotency_key, f"memoverse:idem:draft-{draft.id}-attempt-1")
+        self.assertEqual(payment_a.idempotency_key, f"mv:{draft.id}:1")
+
+    def test_idempotency_key_fits_mercadopago_sdk_header_limit(self):
+        # O SDK da Mercado Pago rejeita x-idempotency-key acima de 64
+        # caracteres. draft.id é um UUID real (36 chars) — o pior caso
+        # plausível — e a chave gerada precisa caber com folga.
+        user = make_user()
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="essential")
+
+        payment = CheckoutService._create_attempt(draft=draft, plan=plan)
+
+        self.assertLessEqual(len(payment.idempotency_key), 64)
 
 
 class CheckoutMercadoPagoClientCallTests(TestCase):

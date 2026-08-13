@@ -108,7 +108,6 @@ class CheckoutService:
         next_attempt = (
             Payment.objects.filter(draft=draft).aggregate(last=Max("attempt_number"))["last"] or 0
         ) + 1
-        reference_suffix = f"draft-{draft.id}-attempt-{next_attempt}"
 
         return Payment.objects.create(
             draft=draft,
@@ -122,7 +121,10 @@ class CheckoutService:
             currency=plan.currency,
             status=Payment.Status.PENDING,
             external_reference=f"memoverse:draft:{draft.id}:attempt:{next_attempt}",
-            idempotency_key=f"memoverse:idem:{reference_suffix}",
+            # Curto de propósito: o SDK da Mercado Pago rejeita
+            # x-idempotency-key acima de 64 caracteres. "mv:<uuid>:<n>" fica
+            # em ~41-42 chars (draft.id sozinho já ocupa 36), com folga.
+            idempotency_key=f"mv:{draft.id}:{next_attempt}",
         )
 
     @staticmethod
