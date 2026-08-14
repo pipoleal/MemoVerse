@@ -8,7 +8,9 @@ for concluído.
 
 import hashlib
 import hmac
+import io
 import json
+import logging
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
@@ -220,3 +222,63 @@ class WebhookDebugLoggingBehaviorUnchangedTests(TestCase):
         self.assertFalse(WebhookEvent.objects.filter(notification_id="beh-1").exists())
         payment.refresh_from_db()
         self.assertEqual(payment.status, Payment.Status.PENDING)
+
+
+class WebhookLoggingConfigurationTests(TestCase):
+    """Confirma que a correção mínima de LOGGING (config/settings.py) está
+    ativa e é cirurgicamente restrita ao logger do webhook — sem depender de
+    assertLogs, que força o nível para baixo durante o teste e mascararia um
+    LOGGING mal configurado."""
+
+    def test_webhook_logger_effective_level_is_info(self):
+        logger = logging.getLogger(WEBHOOK_LOGGER)
+        self.assertEqual(logger.getEffectiveLevel(), logging.INFO)
+        self.assertTrue(logger.isEnabledFor(logging.INFO))
+
+    def test_webhook_logger_has_its_own_handler_and_does_not_propagate(self):
+        logger = logging.getLogger(WEBHOOK_LOGGER)
+        self.assertTrue(logger.handlers, "logger deve ter handler próprio, não depender do lastResort")
+        self.assertFalse(logger.propagate)
+
+    def test_info_message_is_actually_emitted_without_assertlogs_forcing_level(self):
+        logger = logging.getLogger(WEBHOOK_LOGGER)
+        stream = io.StringIO()
+        probe = logging.StreamHandler(stream)
+        probe.setLevel(logging.INFO)
+        logger.addHandler(probe)
+        try:
+            logger.info("TEMPORARY WEBHOOK DEBUG: config smoke test marker")
+        finally:
+            logger.removeHandler(probe)
+        self.assertIn("TEMPORARY WEBHOOK DEBUG: config smoke test marker", stream.getvalue())
+
+    def test_sibling_payments_logger_is_not_elevated(self):
+        # apps.payments.services.mercadopago_client não foi citado no
+        # LOGGING — deve continuar no default (WARNING), provando que a
+        # elevação para INFO foi escopada só ao logger do webhook.
+        sibling = logging.getLogger("apps.payments.services.mercadopago_client")
+        self.assertEqual(sibling.getEffectiveLevel(), logging.WARNING)
+
+    def test_root_logger_is_not_elevated(self):
+        root = logging.getLogger()
+        self.assertEqual(root.getEffectiveLevel(), logging.WARNING)
+
+    def test_no_secret_or_signature_leaks_through_the_new_handler(self):
+        logger = logging.getLogger(WEBHOOK_LOGGER)
+        stream = io.StringIO()
+        probe = logging.StreamHandler(stream)
+        probe.setLevel(logging.INFO)
+        logger.addHandler(probe)
+        try:
+            with override_settings(MP_WEBHOOK_SECRET=WEBHOOK_SECRET):
+                client = Client()
+                user = make_user(email="probe@example.com")
+                draft = make_draft(user)
+                plan = Plan.objects.get(code="essential")
+                payment = make_payment(draft=draft, plan=plan)
+                post_webhook(client, notification_id="probe-1", resource_id=payment.mp_order_id, omit_signature=True)
+        finally:
+            logger.removeHandler(probe)
+        output = stream.getvalue()
+        self.assertIn("TEMPORARY WEBHOOK DEBUG", output)
+        self.assertNotIn(WEBHOOK_SECRET, output)
