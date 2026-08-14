@@ -138,11 +138,26 @@ class MercadoPagoWebhookView(APIView):
             bool(resource_id),
         )
 
-        if not notification_id or not topic or not resource_id:
+        if not topic or not resource_id:
             return _debug_return(
                 Response({"detail": "Notificação incompleta."}, status=status.HTTP_400_BAD_REQUEST),
                 "incomplete_notification",
             )
+
+        if not notification_id:
+            # O campo raiz `id` (identificador do evento) não é garantido pela
+            # documentação da Mercado Pago em todo payload (ex.: o Simulador
+            # de Webhooks do dashboard pode omiti-lo). Sem ele não há chave
+            # de idempotência por evento para gravar em WebhookEvent — mas
+            # isso não impede processar a notificação: a fonte da verdade
+            # (PaymentConfirmationService, que consulta a Order diretamente
+            # na Mercado Pago) já é idempotente por natureza. NUNCA usar
+            # resource_id (data.id, identifica a Order, não o evento) como
+            # substituto: duas notificações distintas da mesma Order
+            # colidiriam na mesma linha e a segunda seria descartada como
+            # duplicata.
+            logger.info("TEMPORARY WEBHOOK DEBUG: notification_id ausente — processando sem WebhookEvent")
+            return self._process_without_notification_id(topic=topic, resource_id=resource_id)
 
         # get_or_create é a garantia de idempotência: a constraint UNIQUE em
         # notification_id vive no banco, não em memória/cache, e o próprio
@@ -213,3 +228,34 @@ class MercadoPagoWebhookView(APIView):
         event.processed_at = timezone.now()
         event.save(update_fields=["status", "processed_at"])
         return _debug_return(Response(status=status.HTTP_200_OK), "processed_ok")
+
+    def _process_without_notification_id(self, *, topic, resource_id):
+        """Processa uma notificação sem `notification_id`, sem gravar
+        WebhookEvent (não há chave de idempotência por evento disponível).
+        A idempotência de negócio continua garantida por
+        PaymentConfirmationService, que só reflete o estado real da Order.
+        """
+        if topic not in SUPPORTED_TOPICS:
+            return _debug_return(Response(status=status.HTTP_200_OK), "unsupported_topic_no_notification_id")
+
+        try:
+            PaymentConfirmationService.confirm_from_order_id(mp_order_id=resource_id)
+        except PaymentNotFound:
+            logger.info("TEMPORARY WEBHOOK DEBUG: exception=PaymentNotFound note=no_notification_id")
+            return _debug_return(Response(status=status.HTTP_200_OK), "payment_not_found_no_notification_id")
+        except OrderMismatch:
+            logger.info("TEMPORARY WEBHOOK DEBUG: exception=OrderMismatch note=no_notification_id")
+            return _debug_return(Response(status=status.HTTP_200_OK), "order_mismatch_no_notification_id")
+        except PaymentConfirmationError as exc:
+            logger.info("TEMPORARY WEBHOOK DEBUG: exception=%s note=no_notification_id", type(exc).__name__)
+            return _debug_return(
+                Response(status=status.HTTP_200_OK), "payment_confirmation_error_no_notification_id"
+            )
+        except MercadoPagoClientError:
+            logger.warning("Falha ao consultar a Order %s na Mercado Pago.", resource_id)
+            logger.info("TEMPORARY WEBHOOK DEBUG: exception=MercadoPagoClientError note=no_notification_id")
+            return _debug_return(
+                Response(status=status.HTTP_502_BAD_GATEWAY), "mercadopago_client_error_no_notification_id"
+            )
+
+        return _debug_return(Response(status=status.HTTP_200_OK), "processed_ok_no_notification_id")

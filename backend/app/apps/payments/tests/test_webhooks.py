@@ -109,6 +109,24 @@ def post_webhook(
     )
 
 
+def post_raw_webhook(
+    client,
+    *,
+    body,
+    resource_id_for_query=None,
+    secret=WEBHOOK_SECRET,
+    x_request_id="req-1",
+    ts="1700000000",
+):
+    """Como post_webhook, mas monta o corpo manualmente — permite omitir
+    campos (id, type, data.id) para testar os gates de validação, sem tocar
+    no helper webhook_body/post_webhook usado pelos testes existentes."""
+    v1 = sign(secret=secret, data_id=resource_id_for_query, x_request_id=x_request_id, ts=ts)
+    headers = {"HTTP_X_SIGNATURE": f"ts={ts},v1={v1}", "HTTP_X_REQUEST_ID": x_request_id}
+    url = f"{WEBHOOK_URL}?data.id={resource_id_for_query}" if resource_id_for_query else WEBHOOK_URL
+    return client.post(url, data=json.dumps(body), content_type="application/json", **headers)
+
+
 def patch_confirmation_mp_client(**create_result_kwargs):
     """Patcheia MercadoPagoClient no módulo do PaymentConfirmationService,
     para que o webhook nunca toque a rede de verdade."""
@@ -374,6 +392,83 @@ class WebhookStatusAndDraftEndToEndTests(TestCase):
         self.draft.refresh_from_db()
         self.assertEqual(payment.status, Payment.Status.APPROVED)
         self.assertEqual(self.draft.status, ExperienceDraft.Status.PAID)
+
+
+@override_settings(MP_WEBHOOK_SECRET=WEBHOOK_SECRET)
+class WebhookNotificationIdOptionalTests(TestCase):
+    """O contrato oficial da Mercado Pago não garante o campo raiz `id`
+    (identificador do evento) em todo payload — o Simulador de Webhooks do
+    dashboard pode omiti-lo. topic e resource_id (data.id) continuam
+    obrigatórios; só a ausência de notification_id deixa de gerar 400."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.plan = Plan.objects.get(code="essential")
+        self.payment = make_payment(draft=self.draft, plan=self.plan, status=Payment.Status.ACTION_REQUIRED)
+
+    def test_missing_notification_id_with_topic_and_resource_id_is_processed_not_400(self):
+        body = {"live_mode": False, "type": "order", "data": {"id": self.payment.mp_order_id}}
+        with patch_confirmation_mp_client(
+            order_id=self.payment.mp_order_id, external_reference=self.payment.external_reference, status="processed"
+        ):
+            response = post_raw_webhook(self.client, body=body, resource_id_for_query=self.payment.mp_order_id)
+        self.assertEqual(response.status_code, 200)
+
+    def test_missing_notification_id_does_not_create_a_webhook_event(self):
+        body = {"live_mode": False, "type": "order", "data": {"id": self.payment.mp_order_id}}
+        count_before = WebhookEvent.objects.count()
+        with patch_confirmation_mp_client(
+            order_id=self.payment.mp_order_id, external_reference=self.payment.external_reference, status="processed"
+        ):
+            post_raw_webhook(self.client, body=body, resource_id_for_query=self.payment.mp_order_id)
+        self.assertEqual(WebhookEvent.objects.count(), count_before)
+
+    def test_missing_notification_id_still_calls_payment_confirmation_service_with_resource_id(self):
+        body = {"live_mode": False, "type": "order", "data": {"id": self.payment.mp_order_id}}
+        with patch_confirmation_mp_client(
+            order_id=self.payment.mp_order_id, external_reference=self.payment.external_reference, status="processed"
+        ) as mock_cls:
+            post_raw_webhook(self.client, body=body, resource_id_for_query=self.payment.mp_order_id)
+        mock_cls.return_value.get_order.assert_called_once_with(order_id=self.payment.mp_order_id)
+
+    def test_missing_topic_returns_400(self):
+        body = {"id": "evt-no-topic", "live_mode": False, "data": {"id": self.payment.mp_order_id}}
+        response = post_raw_webhook(self.client, body=body, resource_id_for_query=self.payment.mp_order_id)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(WebhookEvent.objects.filter(notification_id="evt-no-topic").exists())
+
+    def test_missing_resource_id_returns_400(self):
+        body = {"id": "evt-no-resource", "live_mode": False, "type": "order"}
+        response = post_raw_webhook(self.client, body=body, resource_id_for_query=None)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(WebhookEvent.objects.filter(notification_id="evt-no-resource").exists())
+
+    def test_data_id_is_never_used_as_notification_id(self):
+        # Duas notificações distintas (sem notification_id) para a MESMA
+        # Order devem ser processadas as DUAS vezes — se data.id fosse
+        # indevidamente usado como notification_id, a segunda colidiria e
+        # seria tratada como duplicata. Também confirma que nenhum
+        # WebhookEvent é criado com notification_id == resource_id.
+        body = {"live_mode": False, "type": "order", "data": {"id": self.payment.mp_order_id}}
+        with patch_confirmation_mp_client(
+            order_id=self.payment.mp_order_id, external_reference=self.payment.external_reference, status="processed"
+        ) as mock_cls:
+            post_raw_webhook(self.client, body=body, resource_id_for_query=self.payment.mp_order_id)
+            post_raw_webhook(self.client, body=body, resource_id_for_query=self.payment.mp_order_id)
+        self.assertEqual(mock_cls.return_value.get_order.call_count, 2)
+        self.assertFalse(WebhookEvent.objects.filter(notification_id=self.payment.mp_order_id).exists())
+
+    def test_notification_id_present_flow_is_unchanged(self):
+        # Controle: com notification_id presente, o comportamento é
+        # exatamente o mesmo de antes — WebhookEvent é criado normalmente.
+        with patch_confirmation_mp_client(
+            order_id=self.payment.mp_order_id, external_reference=self.payment.external_reference, status="processed"
+        ):
+            response = post_webhook(self.client, notification_id="with-id-1", resource_id=self.payment.mp_order_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(WebhookEvent.objects.filter(notification_id="with-id-1").exists())
 
 
 @override_settings(MP_WEBHOOK_SECRET=WEBHOOK_SECRET)
