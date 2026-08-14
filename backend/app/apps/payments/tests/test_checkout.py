@@ -13,7 +13,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment, Plan
-from ..services.checkout_service import CheckoutService
+from ..services.checkout_service import CheckoutService, _payer_email_for
 from ..services.mercadopago_client import MercadoPagoGatewayError, MercadoPagoOrderResult
 
 User = get_user_model()
@@ -408,6 +408,37 @@ class CheckoutReferenceGenerationTests(TestCase):
         self.assertLessEqual(len(payment.idempotency_key), 64)
 
 
+class PayerEmailForSandboxTests(TestCase):
+    """Unidade isolada de _payer_email_for, sem passar pelo checkout inteiro."""
+
+    def test_sandbox_rewrites_domain_to_testuser_com(self):
+        self.assertEqual(
+            _payer_email_for(email="real.user@example.com", environment="sandbox"),
+            "real.user@testuser.com",
+        )
+
+    def test_sandbox_preserves_local_part_exactly(self):
+        self.assertEqual(
+            _payer_email_for(email="first.last+tag@anydomain.com.br", environment="sandbox"),
+            "first.last+tag@testuser.com",
+        )
+
+    def test_production_keeps_email_unchanged(self):
+        self.assertEqual(
+            _payer_email_for(email="real.user@example.com", environment="production"),
+            "real.user@example.com",
+        )
+
+    def test_unknown_environment_value_keeps_email_unchanged(self):
+        # Só "sandbox" ativa a reescrita; qualquer outro valor de MP_ENV
+        # (incluindo configuração inválida/ausente) preserva o e-mail real
+        # em vez de arriscar mascarar produção por engano.
+        self.assertEqual(
+            _payer_email_for(email="real.user@example.com", environment="staging"),
+            "real.user@example.com",
+        )
+
+
 class CheckoutMercadoPagoClientCallTests(TestCase):
     def test_mp_client_receives_amount_external_reference_and_idempotency_key(self):
         user = make_user()
@@ -423,6 +454,42 @@ class CheckoutMercadoPagoClientCallTests(TestCase):
         self.assertEqual(call_kwargs["external_reference"], payment.external_reference)
         self.assertEqual(call_kwargs["idempotency_key"], payment.idempotency_key)
         self.assertEqual(call_kwargs["payer"], {"email": user.email})
+
+    def test_payer_email_uses_testuser_domain_in_sandbox(self):
+        # Confirmado via chamada real à Orders API: em Sandbox, payer.email
+        # que não termina em "@testuser.com" é rejeitado com HTTP 400
+        # "invalid_email_for_sandbox".
+        user = make_user(email="real.user+tag@example.com")
+        draft = make_draft(user)
+
+        with patch_mp_client() as mock_cls:
+            mock_cls.return_value.environment = "sandbox"
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+
+        payment = Payment.objects.get(draft=draft)
+        call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
+        self.assertEqual(call_kwargs["payer"], {"email": "real.user+tag@testuser.com"})
+
+        # Nada além do payer muda: mesmo amount/external_reference/idempotency_key
+        # que já eram enviados antes desta correção.
+        self.assertEqual(call_kwargs["amount"], payment.amount)
+        self.assertEqual(call_kwargs["external_reference"], payment.external_reference)
+        self.assertEqual(call_kwargs["idempotency_key"], payment.idempotency_key)
+        self.assertEqual(
+            call_kwargs["payments"],
+            [{"amount": f"{payment.amount:.2f}", "payment_method": {"id": "pix", "type": "bank_transfer"}}],
+        )
+
+    def test_payer_email_stays_real_in_production(self):
+        user = make_user(email="real.user@example.com")
+        draft = make_draft(user)
+
+        with patch_mp_client() as mock_cls:
+            mock_cls.return_value.environment = "production"
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+
+        call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
+        self.assertEqual(call_kwargs["payer"], {"email": "real.user@example.com"})
 
 
 class CheckoutOrderPersistenceTests(TestCase):

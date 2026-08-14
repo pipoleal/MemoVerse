@@ -29,6 +29,24 @@ from .mercadopago_client import MercadoPagoClient, MercadoPagoClientError
 from .status_mapping import map_order_status
 
 
+def _payer_email_for(*, email: str, environment: str) -> str:
+    """Endereço a enviar como payer.email para a Orders API.
+
+    Confirmado via chamada real à API (não especulação): em Sandbox, a
+    Orders API rejeita com HTTP 400 "invalid_email_for_sandbox" qualquer
+    payer.email que não termine em "@testuser.com" — mesmo com um payload
+    por outro lado idêntico ao exigido. Preservamos o local-part do e-mail
+    real do usuário (não um endereço fixo compartilhado) só para manter
+    alguma correlação legível nos logs/dashboard da MP. Em produção,
+    o e-mail real do usuário é sempre usado, sem transformação.
+    """
+
+    if environment != "sandbox":
+        return email
+    local_part = email.split("@", 1)[0]
+    return f"{local_part}@testuser.com"
+
+
 class CheckoutError(Exception):
     """Base para erros de negócio do checkout (não erros de programação)."""
 
@@ -137,7 +155,7 @@ class CheckoutService:
                 currency=payment.currency,
                 external_reference=payment.external_reference,
                 idempotency_key=payment.idempotency_key,
-                payer={"email": draft.owner.email},
+                payer={"email": _payer_email_for(email=draft.owner.email, environment=mp_client.environment)},
                 payments=[
                     {
                         "amount": f"{payment.amount:.2f}",
