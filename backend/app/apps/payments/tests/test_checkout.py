@@ -492,6 +492,65 @@ class CheckoutMercadoPagoClientCallTests(TestCase):
         self.assertEqual(call_kwargs["payer"], {"email": "real.user@example.com"})
 
 
+class SandboxApprovalOptInTests(TestCase):
+    """payer_first_name é opt-in explícito de CheckoutService.start_checkout,
+    nunca acionado pela view HTTP (DraftCheckoutView nunca passa esse
+    argumento) — existe só para disparar sob demanda o mecanismo oficial
+    "APRO" de auto-aprovação do Sandbox da Mercado Pago."""
+
+    def test_sandbox_with_explicit_override_sends_apro_first_name(self):
+        user = make_user(email="real.user@example.com")
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="essential")
+        fake_client = MagicMock()
+        fake_client.environment = "sandbox"
+        fake_client.create_order.return_value = make_mp_result()
+
+        CheckoutService.start_checkout(draft=draft, plan=plan, mp_client=fake_client, payer_first_name="APRO")
+
+        payment = Payment.objects.get(draft=draft)
+        call_kwargs = fake_client.create_order.call_args.kwargs
+        self.assertEqual(call_kwargs["payer"], {"email": "real.user@testuser.com", "first_name": "APRO"})
+
+        # Nada além do payer muda com o override presente.
+        self.assertEqual(call_kwargs["external_reference"], payment.external_reference)
+        self.assertEqual(call_kwargs["idempotency_key"], payment.idempotency_key)
+        self.assertEqual(
+            call_kwargs["payments"],
+            [{"amount": f"{payment.amount:.2f}", "payment_method": {"id": "pix", "type": "bank_transfer"}}],
+        )
+
+    def test_production_never_sends_apro_even_if_override_is_passed(self):
+        user = make_user(email="real.user@example.com")
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="essential")
+        fake_client = MagicMock()
+        fake_client.environment = "production"
+        fake_client.create_order.return_value = make_mp_result()
+
+        CheckoutService.start_checkout(draft=draft, plan=plan, mp_client=fake_client, payer_first_name="APRO")
+
+        call_kwargs = fake_client.create_order.call_args.kwargs
+        self.assertEqual(call_kwargs["payer"], {"email": "real.user@example.com"})
+        self.assertNotIn("first_name", call_kwargs["payer"])
+
+    def test_sandbox_without_override_never_sends_first_name(self):
+        # Confirma que o checkout Sandbox comum (sem o opt-in) continua
+        # exatamente como antes desta mudança.
+        user = make_user(email="real.user@example.com")
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="essential")
+        fake_client = MagicMock()
+        fake_client.environment = "sandbox"
+        fake_client.create_order.return_value = make_mp_result()
+
+        CheckoutService.start_checkout(draft=draft, plan=plan, mp_client=fake_client)
+
+        call_kwargs = fake_client.create_order.call_args.kwargs
+        self.assertEqual(call_kwargs["payer"], {"email": "real.user@testuser.com"})
+        self.assertNotIn("first_name", call_kwargs["payer"])
+
+
 class CheckoutOrderPersistenceTests(TestCase):
     def test_mp_order_id_is_saved(self):
         user = make_user()

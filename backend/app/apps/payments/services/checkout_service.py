@@ -77,7 +77,18 @@ class CheckoutService:
     """Ponto único de orquestração do checkout de um ExperienceDraft."""
 
     @staticmethod
-    def start_checkout(*, draft: ExperienceDraft, plan: Plan, mp_client: MercadoPagoClient | None = None) -> Payment:
+    def start_checkout(
+        *,
+        draft: ExperienceDraft,
+        plan: Plan,
+        mp_client: MercadoPagoClient | None = None,
+        payer_first_name: str | None = None,
+    ) -> Payment:
+        # payer_first_name: opt-in explícito, nunca aceito via HTTP (a view
+        # nunca passa esse argumento). Existe só para permitir, sob demanda
+        # (ex.: manage.py shell), disparar o mecanismo oficial de
+        # auto-aprovação "APRO" do Sandbox da Mercado Pago em um checkout
+        # real — nunca ativado por um checkout Sandbox comum.
         payment = CheckoutService._get_or_create_active_payment(draft=draft, plan=plan)
 
         if payment.mp_order_id:
@@ -85,7 +96,12 @@ class CheckoutService:
             # não repetir a chamada à MP.
             return payment
 
-        return CheckoutService._create_order(payment=payment, draft=draft, mp_client=mp_client or MercadoPagoClient())
+        return CheckoutService._create_order(
+            payment=payment,
+            draft=draft,
+            mp_client=mp_client or MercadoPagoClient(),
+            payer_first_name=payer_first_name,
+        )
 
     @staticmethod
     def _get_or_create_active_payment(*, draft: ExperienceDraft, plan: Plan) -> Payment:
@@ -148,14 +164,28 @@ class CheckoutService:
         )
 
     @staticmethod
-    def _create_order(*, payment: Payment, draft: ExperienceDraft, mp_client: MercadoPagoClient) -> Payment:
+    def _create_order(
+        *,
+        payment: Payment,
+        draft: ExperienceDraft,
+        mp_client: MercadoPagoClient,
+        payer_first_name: str | None = None,
+    ) -> Payment:
+        payer = {"email": _payer_email_for(email=draft.owner.email, environment=mp_client.environment)}
+        # Segunda trava, independente da chamadora: o mecanismo "APRO" de
+        # auto-aprovação da Mercado Pago só é enviado se o ambiente também
+        # for sandbox. Mesmo um payer_first_name="APRO" passado por engano
+        # nunca chega à Mercado Pago em produção.
+        if payer_first_name and mp_client.environment == "sandbox":
+            payer["first_name"] = payer_first_name
+
         try:
             result = mp_client.create_order(
                 amount=payment.amount,
                 currency=payment.currency,
                 external_reference=payment.external_reference,
                 idempotency_key=payment.idempotency_key,
-                payer={"email": _payer_email_for(email=draft.owner.email, environment=mp_client.environment)},
+                payer=payer,
                 payments=[
                     {
                         "amount": f"{payment.amount:.2f}",
