@@ -234,30 +234,3 @@ MP_ENV = config("MP_ENV", default="sandbox")
 # Assinatura secreta usada para validar o header x-signature dos webhooks
 # (Suas integrações > Webhooks > Configurar notificação > revelar chave).
 MP_WEBHOOK_SECRET = config("MP_WEBHOOK_SECRET", default="")
-
-
-# Logging
-# Sem este bloco, o Django não registra nenhum handler próprio: a cadeia de
-# loggers herda o comportamento padrão do Python (root em WARNING, sem
-# handlers), e WARNING/ERROR só aparecem no Render por acidente, via o
-# fallback interno logging.lastResort. Este bloco NÃO muda isso para nenhum
-# outro logger — ele só cria um handler de console dedicado e baixa o nível
-# especificamente para apps.payments.views.webhook, para que as mensagens
-# INFO de TEMPORARY WEBHOOK DEBUG sejam emitidas.
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {
-        "webhook_console": {
-            "class": "logging.StreamHandler",
-            "level": "INFO",
-        },
-    },
-    "loggers": {
-        "apps.payments.views.webhook": {
-            "handlers": ["webhook_console"],
-            "level": "INFO",
-            "propagate": False,
-        },
-    },
-}
