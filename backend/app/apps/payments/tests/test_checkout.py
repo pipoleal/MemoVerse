@@ -177,7 +177,7 @@ class CheckoutPlanResolutionTests(TestCase):
             )
         payment = Payment.objects.get(draft=self.draft)
         self.assertNotEqual(payment.external_reference, "hacked-ref")
-        self.assertEqual(payment.external_reference, f"memoverse:draft:{self.draft.id}:attempt:1")
+        self.assertEqual(payment.external_reference, f"memoverse-draft-{self.draft.id}-attempt-1")
 
     def test_idempotency_key_sent_by_client_is_ignored(self):
         with patch_mp_client():
@@ -361,7 +361,27 @@ class CheckoutReferenceGenerationTests(TestCase):
         with patch_mp_client():
             auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
         payment = Payment.objects.get(draft=draft)
-        self.assertEqual(payment.external_reference, f"memoverse:draft:{draft.id}:attempt:1")
+        self.assertEqual(payment.external_reference, f"memoverse-draft-{draft.id}-attempt-1")
+
+    def test_external_reference_fits_mercadopago_pattern_and_length(self):
+        # A Orders API rejeita external_reference com HTTP 400 se ele tiver
+        # caracteres fora de [A-Za-z0-9_-] ou mais de 64 caracteres (causa
+        # raiz confirmada via chamada real à API: "does not match pattern").
+        import re
+
+        user = make_user()
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="essential")
+
+        payment = CheckoutService._create_attempt(draft=draft, plan=plan)
+
+        self.assertLessEqual(len(payment.external_reference), 64)
+        self.assertRegex(payment.external_reference, r"^[A-Za-z0-9_-]+$")
+
+        # Estável entre retries da MESMA tentativa (mesma garantia do
+        # idempotency_key): nunca regenerado, só lido do banco.
+        payment.refresh_from_db()
+        self.assertEqual(payment.external_reference, f"memoverse-draft-{draft.id}-attempt-1")
 
     def test_idempotency_key_is_generated_by_backend_and_is_stable(self):
         user = make_user()

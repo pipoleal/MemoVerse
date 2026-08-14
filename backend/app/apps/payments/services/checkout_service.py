@@ -120,7 +120,9 @@ class CheckoutService:
             amount=plan.price,
             currency=plan.currency,
             status=Payment.Status.PENDING,
-            external_reference=f"memoverse:draft:{draft.id}:attempt:{next_attempt}",
+            # A Orders API só aceita [A-Za-z0-9_-] em external_reference (rejeita
+            # ":" com HTTP 400 "does not match pattern") e no máximo 64 chars.
+            external_reference=f"memoverse-draft-{draft.id}-attempt-{next_attempt}",
             # Curto de propósito: o SDK da Mercado Pago rejeita
             # x-idempotency-key acima de 64 caracteres. "mv:<uuid>:<n>" fica
             # em ~41-42 chars (draft.id sozinho já ocupa 36), com folga.
