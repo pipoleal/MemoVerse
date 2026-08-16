@@ -14,7 +14,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import ExperienceDraft, Media
-from .serializers import ExperienceDraftSerializer, UploadIntentSerializer
+from .serializers import ExperienceDraftSerializer, PublishResponseSerializer, UploadIntentSerializer
+from .services.publication_service import DraftNotPayable, PublicationService
 from .storage import get_r2_client
 
 
@@ -49,6 +50,37 @@ class DraftDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class DraftPublishView(APIView):
+    """POST /api/experiences/drafts/<uuid:draft_id>/publish/
+
+    Publica um ExperienceDraft já pago (status=paid), gerando um slug
+    público via PublicationService. Idempotente: publicar um draft já
+    publicado retorna o mesmo slug, sem efeito colateral adicional.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, draft_id):
+        # Mesmo padrão do resto do app: draft de outro usuário -> 404,
+        # nunca revelando que existe.
+        draft = get_owned_draft_or_404(request, draft_id)
+
+        try:
+            published = PublicationService.publish(draft)
+        except DraftNotPayable:
+            return Response(
+                {"detail": "Este draft ainda não foi pago."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        response_data = {
+            "slug": published.slug,
+            "status": published.status,
+            "published_at": published.published_at,
+        }
+        return Response(PublishResponseSerializer(response_data).data, status=status.HTTP_200_OK)
 
 
 class MediaUploadIntentView(APIView):

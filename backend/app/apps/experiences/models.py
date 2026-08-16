@@ -21,6 +21,12 @@ class ExperienceDraft(models.Model):
         related_name="experience_drafts",
     )
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.DRAFT)
+    # Gerado só na primeira publicação (nunca antes, nunca a partir de
+    # título/dado editável) — ver apps.experiences.services.publication_service.
+    # null=True: rascunhos não publicados não têm slug; UNIQUE permite
+    # múltiplos NULL no Postgres, então isso não exige constraint condicional.
+    slug = models.CharField(max_length=32, unique=True, null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
     experience_type = models.CharField(max_length=100, blank=True)
     theme = models.CharField(max_length=100, blank=True)
     title = models.CharField(max_length=200, blank=True)

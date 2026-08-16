@@ -26,6 +26,15 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "status", "media", "created_at", "updated_at")
 
 
+class PublishResponseSerializer(serializers.Serializer):
+    """Somente os dados que o frontend precisa após publicar. Nunca inclui
+    owner, payment ou qualquer outro dado interno do draft."""
+
+    slug = serializers.CharField()
+    status = serializers.CharField()
+    published_at = serializers.DateTimeField()
+
+
 class UploadIntentSerializer(serializers.Serializer):
     media_type = serializers.ChoiceField(choices=Media.Type.choices)
     filename = serializers.CharField(max_length=255)
