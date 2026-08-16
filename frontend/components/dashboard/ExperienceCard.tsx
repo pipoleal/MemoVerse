@@ -1,20 +1,65 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 import FadeIn from "../animations/FadeIn";
+import Button from "../ui/Button";
 
 type ExperienceCardProps = {
+  id: string;
+  slug: string | null;
   title: string;
   recipient: string;
+  // Raw backend status (ExperienceDraft.Status), used to decide the action —
+  // never inferred from statusLabel, which is only for display.
   status: string;
+  statusLabel: string;
   createdAt: string;
 };
 
+// Resume/access action per status. Every target here already exists and
+// works today (CheckoutView already resumes checkout / shows the publish
+// step based on payment status; /e/[slug] already renders a published
+// experience) — this only wires the Dashboard card into those existing
+// routes, no new flow is created.
+//
+// "draft" (not yet in checkout) intentionally has no action: there is no
+// existing way to reload a draft's data back into the creation wizard
+// (ExperienceContext only ever creates a NEW draft, never fetches one), so
+// linking it anywhere here would either be a dead end or, worse, sending
+// the user into /checkout/[draftId] would auto-start a real payment
+// attempt for a possibly-incomplete draft. Left as a known follow-up.
+function getCardAction(
+  status: string,
+  id: string,
+  slug: string | null
+): { label: string; href: string } | null {
+  switch (status) {
+    case "awaiting_payment":
+      return { label: "Continuar pagamento", href: `/checkout/${id}` };
+    case "payment_failed":
+      return { label: "Tentar pagamento novamente", href: `/checkout/${id}` };
+    case "paid":
+      return { label: "Publicar experiência", href: `/checkout/${id}` };
+    case "published":
+      return slug ? { label: "Abrir experiência publicada", href: `/e/${slug}` } : null;
+    default:
+      return null;
+  }
+}
+
 export default function ExperienceCard({
+  id,
+  slug,
   title,
   recipient,
   status,
+  statusLabel,
   createdAt,
 }: ExperienceCardProps) {
+  const router = useRouter();
+  const action = getCardAction(status, id, slug);
+
   return (
     <FadeIn>
       <div
@@ -35,7 +80,7 @@ export default function ExperienceCard({
         <div className="flex items-center justify-between">
 
           <span className="rounded-full bg-yellow-400/20 px-3 py-1 text-xs font-semibold text-yellow-300">
-            {status}
+            {statusLabel}
           </span>
 
           <span className="text-xs text-slate-400">
@@ -51,6 +96,16 @@ export default function ExperienceCard({
         <p className="mt-3 text-slate-400">
           Para {recipient}
         </p>
+
+        {action && (
+          <Button
+            variant="secondary"
+            className="mt-6 w-full py-3 text-sm"
+            onClick={() => router.push(action.href)}
+          >
+            {action.label}
+          </Button>
+        )}
 
       </div>
     </FadeIn>

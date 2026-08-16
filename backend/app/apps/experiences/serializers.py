@@ -19,11 +19,13 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExperienceDraft
         fields = (
-            "id", "status", "experience_type", "theme", "title", "recipient_name",
+            "id", "status", "slug", "experience_type", "theme", "title", "recipient_name",
             "creator_name", "event_date", "letter", "short_message", "music_provider",
             "music_url", "media", "created_at", "updated_at",
         )
-        read_only_fields = ("id", "status", "media", "created_at", "updated_at")
+        # slug is only ever set by PublicationService on first publish (see
+        # models.ExperienceDraft.slug) — never client-writable, same as status.
+        read_only_fields = ("id", "status", "slug", "media", "created_at", "updated_at")
 
 
 class PublishResponseSerializer(serializers.Serializer):
