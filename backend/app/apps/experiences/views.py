@@ -4,19 +4,24 @@ from pathlib import PurePath
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.db.models import Max
+from django.db.models import Max, Prefetch
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import ExperienceDraft, Media
-from .serializers import ExperienceDraftSerializer, PublishResponseSerializer, UploadIntentSerializer
+from .serializers import (
+    ExperienceDraftSerializer,
+    PublicExperienceSerializer,
+    PublishResponseSerializer,
+    UploadIntentSerializer,
+)
 from .services.publication_service import DraftNotPayable, PublicationService
-from .storage import get_r2_client
+from .storage import generate_presigned_read_url, get_r2_client
 
 
 def get_owned_draft_or_404(request, draft_id):
@@ -81,6 +86,68 @@ class DraftPublishView(APIView):
             "published_at": published.published_at,
         }
         return Response(PublishResponseSerializer(response_data).data, status=status.HTTP_200_OK)
+
+
+class PublicExperienceView(APIView):
+    """GET /api/public/experiences/<slug:slug>/
+
+    Único endpoint deste app sem autenticação — quem recebeu o link de uma
+    experiência publicada não tem (nem deveria precisar de) conta no
+    MemoVerse. Só retorna o necessário para renderizar a experiência.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        # slug inexistente E draft existente-mas-não-publicado caem no MESMO
+        # Http404 (a query exige as duas condições ao mesmo tempo) — nunca
+        # diferencia os dois casos, mesmo padrão de "nunca revelar
+        # existência" já usado em get_owned_draft_or_404.
+        draft = get_object_or_404(
+            ExperienceDraft.objects.prefetch_related(
+                Prefetch("media", queryset=Media.objects.filter(upload_status=Media.UploadStatus.UPLOADED))
+            ),
+            slug=slug,
+            status=ExperienceDraft.Status.PUBLISHED,
+        )
+
+        media_items = []
+        for media in draft.media.all():
+            try:
+                url = generate_presigned_read_url(media.storage_key)
+            except ImproperlyConfigured:
+                # Mesmo tratamento de infraestrutura indisponível já usado em
+                # MediaUploadIntentView — nunca deixa o traceback chegar ao
+                # cliente.
+                return Response(
+                    {"detail": "Mídia temporariamente indisponível."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            media_items.append(
+                {
+                    "id": media.id,
+                    "media_type": media.media_type,
+                    "url": url,
+                    "original_filename": media.original_filename,
+                    "sort_order": media.sort_order,
+                }
+            )
+
+        response_data = {
+            "slug": draft.slug,
+            "title": draft.title,
+            "experience_type": draft.experience_type,
+            "theme": draft.theme,
+            "recipient_name": draft.recipient_name,
+            "creator_name": draft.creator_name,
+            "event_date": draft.event_date,
+            "letter": draft.letter,
+            "short_message": draft.short_message,
+            "music": {"provider": draft.music_provider, "url": draft.music_url},
+            "media": media_items,
+            "published_at": draft.published_at,
+        }
+        return Response(PublicExperienceSerializer(response_data).data)
 
 
 class MediaUploadIntentView(APIView):

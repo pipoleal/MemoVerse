@@ -35,6 +35,45 @@ class PublishResponseSerializer(serializers.Serializer):
     published_at = serializers.DateTimeField()
 
 
+class PublicMediaSerializer(serializers.Serializer):
+    """Uma mídia pública: só o suficiente para renderizar. `url` é sempre
+    uma presigned GET temporária (ver storage.generate_presigned_read_url)
+    — storage_key nunca aparece aqui."""
+
+    id = serializers.UUIDField()
+    media_type = serializers.CharField()
+    url = serializers.CharField()
+    original_filename = serializers.CharField()
+    sort_order = serializers.IntegerField()
+
+
+class PublicMusicSerializer(serializers.Serializer):
+    provider = serializers.CharField()
+    url = serializers.CharField()
+
+
+class PublicExperienceSerializer(serializers.Serializer):
+    """Resposta de GET /api/public/experiences/<slug>/ — sem autenticação.
+
+    Deliberadamente NUNCA inclui: id interno do draft, owner/dados do
+    usuário, status de pagamento, Payment, mp_order_id/mp_payment_id,
+    storage_key ou qualquer outro dado interno. Só o necessário para
+    renderizar a experiência para quem recebeu o link."""
+
+    slug = serializers.CharField()
+    title = serializers.CharField()
+    experience_type = serializers.CharField()
+    theme = serializers.CharField()
+    recipient_name = serializers.CharField()
+    creator_name = serializers.CharField()
+    event_date = serializers.DateField(allow_null=True)
+    letter = serializers.CharField()
+    short_message = serializers.CharField()
+    music = PublicMusicSerializer()
+    media = PublicMediaSerializer(many=True)
+    published_at = serializers.DateTimeField()
+
+
 class UploadIntentSerializer(serializers.Serializer):
     media_type = serializers.ChoiceField(choices=Media.Type.choices)
     filename = serializers.CharField(max_length=255)

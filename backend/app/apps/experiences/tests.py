@@ -83,6 +83,10 @@ def upload_complete_url(draft_id, media_id):
     return f"/api/experiences/drafts/{draft_id}/media/{media_id}/complete/"
 
 
+def public_url(slug):
+    return f"/api/public/experiences/{slug}/"
+
+
 class PublishOwnershipTests(TestCase):
     def setUp(self):
         self.owner = make_user("owner@example.com")
@@ -515,3 +519,197 @@ class MediaUploadCompleteRegressionTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.media.refresh_from_db()
         self.assertEqual(self.media.upload_status, Media.UploadStatus.PENDING)
+
+
+class PublicExperienceViewTests(TestCase):
+    """GET /api/public/experiences/<slug>/ — sem autenticação (AllowAny),
+    nunca exige/aceita JWT."""
+
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+        self.draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="test-slug-123",
+            published_at=timezone.now(),
+            title="Feliz Aniversário",
+            experience_type="aniversario",
+            theme="stellar",
+            recipient_name="Fulano",
+            creator_name="Ciclano",
+            event_date="2026-12-25",
+            letter="Uma carta bonita.",
+            short_message="Com carinho.",
+            music_provider="youtube",
+            music_url="https://www.youtube.com/watch?v=abc123",
+        )
+
+    def _patch_presigned_url(self, url="https://r2.example/signed-read"):
+        return patch("apps.experiences.views.generate_presigned_read_url", return_value=url)
+
+    def test_published_experience_returns_200_with_expected_fields(self):
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["slug"], "test-slug-123")
+        self.assertEqual(response.data["title"], "Feliz Aniversário")
+        self.assertEqual(response.data["experience_type"], "aniversario")
+        self.assertEqual(response.data["theme"], "stellar")
+        self.assertEqual(response.data["recipient_name"], "Fulano")
+        self.assertEqual(response.data["creator_name"], "Ciclano")
+        self.assertEqual(str(response.data["event_date"]), "2026-12-25")
+        self.assertEqual(response.data["letter"], "Uma carta bonita.")
+        self.assertEqual(response.data["short_message"], "Com carinho.")
+        self.assertEqual(response.data["music"], {"provider": "youtube", "url": "https://www.youtube.com/watch?v=abc123"})
+        self.assertIn("published_at", response.data)
+        self.assertEqual(response.data["media"], [])
+
+    def test_request_requires_no_authentication_at_all(self):
+        # Cliente sem NENHUM header de Authorization — nem token inválido,
+        # simplesmente ausente.
+        with self._patch_presigned_url():
+            response = APIClient().get(public_url(self.draft.slug))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_nonexistent_slug_returns_404(self):
+        response = self.client.get(public_url("does-not-exist"))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_paid_but_not_published_draft_returns_404(self):
+        # PublicationService só atribui slug na publicação — para simular
+        # "existe, tem algo parecido com slug, mas não está published",
+        # setamos um slug manualmente sem publicar (cenário defensivo).
+        paid_draft = make_draft(self.owner, status=ExperienceDraft.Status.PAID, slug="paid-not-published")
+        response = self.client.get(public_url(paid_draft.slug))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_404_response_is_identical_whether_slug_exists_or_not(self):
+        paid_draft = make_draft(self.owner, status=ExperienceDraft.Status.PAID, slug="paid-not-published-2")
+
+        response_existing_unpublished = self.client.get(public_url(paid_draft.slug))
+        response_nonexistent = self.client.get(public_url("totally-made-up-slug"))
+
+        self.assertEqual(response_existing_unpublished.status_code, response_nonexistent.status_code)
+        self.assertEqual(response_existing_unpublished.data, response_nonexistent.data)
+
+    def test_uploaded_media_appears_in_response(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED, sort_order=0)
+
+        with self._patch_presigned_url(url="https://r2.example/photo-signed"):
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(len(response.data["media"]), 1)
+        item = response.data["media"][0]
+        self.assertEqual(item["id"], str(media.id))
+        self.assertEqual(item["media_type"], "photo")
+        self.assertEqual(item["url"], "https://r2.example/photo-signed")
+        self.assertEqual(item["original_filename"], media.original_filename)
+        self.assertEqual(item["sort_order"], 0)
+
+    def test_pending_media_does_not_appear(self):
+        make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(response.data["media"], [])
+
+    def test_failed_media_does_not_appear(self):
+        make_media(self.draft, upload_status=Media.UploadStatus.FAILED)
+
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(response.data["media"], [])
+
+    def test_only_uploaded_media_is_returned_among_a_mix_of_statuses(self):
+        uploaded = make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED, sort_order=0)
+        make_media(self.draft, upload_status=Media.UploadStatus.PENDING, sort_order=1)
+        make_media(self.draft, upload_status=Media.UploadStatus.FAILED, sort_order=2)
+
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(len(response.data["media"]), 1)
+        self.assertEqual(response.data["media"][0]["id"], str(uploaded.id))
+
+    def test_another_experiences_media_is_never_mixed_in(self):
+        other_owner = make_user("other-owner@example.com")
+        other_draft = make_draft(
+            other_owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="other-experience-slug",
+            published_at=timezone.now(),
+        )
+        make_media(other_draft, upload_status=Media.UploadStatus.UPLOADED)
+        make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
+
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(len(response.data["media"]), 1)
+        self.assertEqual(Media.objects.filter(draft=self.draft).count(), 1)
+        self.assertEqual(Media.objects.filter(draft=other_draft).count(), 1)
+
+    def test_r2_not_configured_returns_503(self):
+        make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
+        # Sem mock: ambiente de teste não tem credenciais R2 configuradas,
+        # então generate_presigned_read_url real levanta ImproperlyConfigured.
+        response = self.client.get(public_url(self.draft.slug))
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def test_presigned_url_is_generated_with_the_correct_storage_key(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
+
+        with self._patch_presigned_url() as mock_fn:
+            self.client.get(public_url(self.draft.slug))
+
+        mock_fn.assert_called_once_with(media.storage_key)
+
+    def test_storage_key_never_appears_anywhere_in_the_response(self):
+        media = make_media(
+            self.draft,
+            upload_status=Media.UploadStatus.UPLOADED,
+            storage_key=f"drafts/{self.draft.id}/photos/very-secret-internal-key.jpg",
+        )
+
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        serialized = str(response.data)
+        self.assertNotIn(media.storage_key, serialized)
+        self.assertNotIn("very-secret-internal-key", serialized)
+
+    def test_response_never_exposes_owner_or_payment_data(self):
+        make_payment(draft=self.draft, status=Payment.Status.APPROVED)
+
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        serialized_keys = str(response.data)
+        for forbidden in (
+            "owner",
+            "owner_id",
+            "payment",
+            "payment_id",
+            "mp_order_id",
+            "mp_payment_id",
+            self.owner.email,
+            str(self.owner.id),
+            str(self.draft.id),
+        ):
+            self.assertNotIn(forbidden, serialized_keys)
+
+    def test_response_top_level_keys_are_exactly_the_public_contract(self):
+        with self._patch_presigned_url():
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(
+            set(response.data.keys()),
+            {
+                "slug", "title", "experience_type", "theme", "recipient_name",
+                "creator_name", "event_date", "letter", "short_message",
+                "music", "media", "published_at",
+            },
+        )
