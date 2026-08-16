@@ -145,9 +145,18 @@ export function ExperienceProvider({
   );
 }
 
+// Non-throwing variant: returns null instead of erroring when there is no
+// ExperienceProvider ancestor. Exists for components that must also work
+// standalone (e.g. ExperienceViewer rendered on the future public page with
+// an `experience` prop, outside the wizard's Provider) — those components
+// call this instead of useExperience() so mounting without a Provider is a
+// valid, non-throwing state rather than a crash.
+export function useOptionalExperience() {
+  return useContext(ExperienceContext);
+}
+
 export function useExperience() {
-  const context =
-    useContext(ExperienceContext);
+  const context = useOptionalExperience();
 
   if (!context) {
     throw new Error(

@@ -1,0 +1,204 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+
+import { useOptionalExperience } from "../experience/context/ExperienceContext";
+import type { Experience } from "../experience/types";
+
+import LetterChapter from "./scenes/LetterChapter";
+import PlanetScene from "./scenes/PlanetScene";
+import RecipientRevealChapter from "./scenes/RecipientRevealChapter";
+import MemoriesCanvas from "./MemoriesCanvas";
+import MusicPlayer from "./MusicPlayer";
+
+export type ExperienceChapter =
+  | "idle"
+  | "signature-opening"
+  | "recipient-reveal"
+  | "letter"
+  | "memories"
+  | "closing"
+  | "completed";
+
+type ExperienceRuntimeEvent =
+  | "START_EXPERIENCE"
+  | "SIGNATURE_COMPLETE"
+  | "RECIPIENT_COMPLETE"
+  | "LETTER_COMPLETE"
+  | "MEMORIES_COMPLETE"
+  | "CLOSING_COMPLETE";
+
+// Duração compartilhada do crossfade entre capítulos — mesmo valor que já
+// era usado na saída da carta, agora aplicado por uma camada única.
+const CHAPTER_TRANSITION = { duration: 0.7, ease: "easeInOut" } as const;
+
+type ExperienceViewerProps = {
+  // When provided, this experience is rendered as-is and the component does
+  // NOT touch ExperienceContext at all — the wizard's ExperienceProvider is
+  // not required in this mode (e.g. the future public page /e/[slug],
+  // rendering an Experience fetched from the API). When omitted, the
+  // component falls back to the wizard's context, exactly as before —
+  // ExperienceProvider is then required, same as today.
+  experience?: Experience;
+  onCompleted?: () => void;
+};
+
+export default function ExperienceViewer({ experience: experienceProp, onCompleted }: ExperienceViewerProps) {
+  // useOptionalExperience (not useExperience) never throws when there is no
+  // Provider — required so the prop-driven mode above can mount without one.
+  const context = useOptionalExperience();
+  const experience = experienceProp ?? context?.experience;
+
+  const [chapter, setChapter] =
+    useState<ExperienceChapter>("idle");
+  const [hasInteracted, setHasInteracted] = useState(false);
+
+  const send = useCallback((event: ExperienceRuntimeEvent) => {
+    setChapter((currentChapter) => {
+      if (event === "START_EXPERIENCE" && currentChapter === "idle") {
+        return "signature-opening";
+      }
+
+      if (event === "SIGNATURE_COMPLETE" && currentChapter === "signature-opening") {
+        return "recipient-reveal";
+      }
+
+      if (event === "RECIPIENT_COMPLETE" && currentChapter === "recipient-reveal") {
+        return "letter";
+      }
+
+      if (event === "LETTER_COMPLETE" && currentChapter === "letter") {
+        return "memories";
+      }
+
+      if (event === "MEMORIES_COMPLETE" && currentChapter === "memories") {
+        return "closing";
+      }
+
+      if (event === "CLOSING_COMPLETE" && currentChapter === "closing") {
+        return "completed";
+      }
+
+      return currentChapter;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (chapter !== "closing") return;
+    const completionTimer = window.setTimeout(() => send("CLOSING_COMPLETE"), 1200);
+    return () => window.clearTimeout(completionTimer);
+  }, [chapter, send]);
+
+  useEffect(() => {
+    if (chapter === "completed") onCompleted?.();
+  }, [chapter, onCompleted]);
+
+  if (!experience) {
+    // Neither an `experience` prop nor an ExperienceProvider ancestor was
+    // found — same fail-fast guarantee useExperience() gave before this
+    // refactor, just reachable from either mode now instead of only one.
+    throw new Error(
+      "ExperienceViewer precisa de uma prop `experience` ou de um ExperienceProvider ancestral."
+    );
+  }
+
+  const isSignatureChapter =
+    chapter === "idle" ||
+    chapter === "signature-opening";
+
+  return (
+    <main className="relative min-h-screen w-full overflow-hidden bg-black">
+      <MusicPlayer
+        provider={experience.music.provider}
+        url={experience.music.url}
+        playing={hasInteracted}
+      />
+
+      <AnimatePresence mode="sync" initial={false}>
+        {isSignatureChapter && (
+          <motion.div
+            key="opening"
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={CHAPTER_TRANSITION}
+          >
+            <PlanetScene
+              onStart={() => {
+                setHasInteracted(true);
+                send("START_EXPERIENCE");
+              }}
+              onStarsComplete={() => {
+                send("SIGNATURE_COMPLETE");
+              }}
+              started={chapter === "signature-opening"}
+            />
+          </motion.div>
+        )}
+
+        {chapter === "recipient-reveal" && (
+          <motion.div
+            key="recipient-reveal"
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={CHAPTER_TRANSITION}
+          >
+            <RecipientRevealChapter
+              title={experience.title || "Nossa história"}
+              recipient={experience.recipient || "Você"}
+              onComplete={() => {
+                send("RECIPIENT_COMPLETE");
+              }}
+            />
+          </motion.div>
+        )}
+
+        {chapter === "letter" && (
+          <motion.div
+            key="letter"
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={CHAPTER_TRANSITION}
+          >
+            <LetterChapter
+              recipient={experience.recipient || "Você"}
+              creator={experience.creator}
+              letter={experience.letter}
+              theme={experience.theme}
+              eventDate={experience.eventDate}
+              onComplete={() => {
+                send("LETTER_COMPLETE");
+              }}
+            />
+          </motion.div>
+        )}
+
+        {chapter === "memories" && (
+          <motion.div
+            key="memories"
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={CHAPTER_TRANSITION}
+          >
+            <MemoriesCanvas
+              shortMessage={experience.shortMessage}
+              photos={experience.photos}
+              videos={experience.videos}
+              onComplete={() => {
+                send("MEMORIES_COMPLETE");
+              }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </main>
+  );
+}
