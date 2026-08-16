@@ -11,6 +11,7 @@ import {
   type CheckoutResponse,
   type PaymentStatus,
 } from "@/lib/checkout";
+import { extractPublishErrorMessage, publishDraft } from "@/lib/publish";
 
 // No plan-selection UI exists anywhere in the product yet (confirmed: no
 // `plan` field on the wizard's Experience type, no plan picker component).
@@ -203,7 +204,7 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
             />
           )}
 
-          {phase.kind === "approved" && <ApprovedBlock />}
+          {phase.kind === "approved" && <ApprovedBlock draftId={draftId} />}
 
           {phase.kind === "payment_failed" && (
             <FailedBlock
@@ -329,15 +330,132 @@ function AwaitingPaymentBlock({
   );
 }
 
-function ApprovedBlock() {
+type PublishPhase =
+  | { kind: "idle" }
+  | { kind: "publishing" }
+  | { kind: "published"; slug: string }
+  | { kind: "error"; message: string };
+
+function ApprovedBlock({ draftId }: { draftId: string }) {
+  const [publishPhase, setPublishPhase] = useState<PublishPhase>({ kind: "idle" });
+  const [linkCopyFeedback, setLinkCopyFeedback] = useState<"idle" | "copied" | "failed">("idle");
+
+  async function handlePublish() {
+    // Guards against a double click firing two requests — once published,
+    // this branch is also never reachable again since the button is
+    // replaced by the link block below.
+    if (publishPhase.kind === "publishing" || publishPhase.kind === "published") return;
+
+    setPublishPhase({ kind: "publishing" });
+
+    try {
+      // draftId is exactly the one this whole page was loaded with (passed
+      // straight through from CheckoutView, itself the /checkout/[draftId]
+      // route param) — never re-derived or guessed here.
+      const result = await publishDraft(draftId);
+      // Any 200 here — first publish or an idempotent republish of an
+      // already-published draft — is treated identically as success; the
+      // backend guarantees the same slug either way, no special-casing.
+      setPublishPhase({ kind: "published", slug: result.slug });
+    } catch (error) {
+      // Publish failing never touches CheckoutView's own phase — the
+      // approved-payment state (this component even being rendered) is
+      // entirely unaffected by a publish error.
+      setPublishPhase({ kind: "error", message: extractPublishErrorMessage(error) });
+    }
+  }
+
+  const publicUrl = publishPhase.kind === "published" ? `${window.location.origin}/e/${publishPhase.slug}` : null;
+
+  async function copyPublicLink() {
+    if (!publicUrl) return;
+
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setLinkCopyFeedback("copied");
+    } catch {
+      setLinkCopyFeedback("failed");
+    } finally {
+      setTimeout(() => setLinkCopyFeedback("idle"), 2500);
+    }
+  }
+
   return (
     <div className="flex flex-col items-center gap-4 rounded-3xl border border-green-400/30 bg-green-400/10 p-10 text-center backdrop-blur-xl">
       <span className="text-5xl">✓</span>
       <h2 className="text-2xl font-bold text-white">Pagamento aprovado!</h2>
       <p className="text-slate-300">Sua experiência foi paga com sucesso.</p>
+
+      {publishPhase.kind === "idle" && (
+        <button
+          type="button"
+          onClick={() => void handlePublish()}
+          className="mt-2 rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-105"
+        >
+          ✨ Publicar experiência
+        </button>
+      )}
+
+      {publishPhase.kind === "publishing" && (
+        <button
+          type="button"
+          disabled
+          className="mt-2 flex items-center gap-3 rounded-full bg-yellow-400/50 px-6 py-3 font-semibold text-black/70"
+        >
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+          Publicando...
+        </button>
+      )}
+
+      {publishPhase.kind === "error" && (
+        <div className="mt-2 flex flex-col items-center gap-3">
+          <p className="text-sm text-red-300">{publishPhase.message}</p>
+          <button
+            type="button"
+            onClick={() => void handlePublish()}
+            className="rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-105"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {publishPhase.kind === "published" && publicUrl && (
+        <div className="mt-2 flex w-full flex-col items-center gap-3">
+          <p className="text-sm font-semibold text-green-300">✨ Experiência publicada!</p>
+
+          <div className="w-full break-all rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+            {publicUrl}
+          </div>
+
+          <div className="flex w-full flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => void copyPublicLink()}
+              className="flex-1 rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-[1.02] active:scale-95"
+            >
+              {linkCopyFeedback === "copied" ? "✓ Link copiado" : "Copiar link"}
+            </button>
+
+            <a
+              href={publicUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
+            >
+              Abrir experiência
+            </a>
+          </div>
+
+          {linkCopyFeedback === "failed" && (
+            <p className="text-xs text-red-300">Não foi possível copiar automaticamente. Selecione o link acima manualmente.</p>
+          )}
+        </div>
+      )}
+
       <a
         href="/dashboard"
-        className="mt-2 rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-105"
+        className="mt-2 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
       >
         Ir para o Dashboard
       </a>
