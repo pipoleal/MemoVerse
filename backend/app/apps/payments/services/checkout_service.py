@@ -24,6 +24,8 @@ Dois meios de pagamento suportados, sempre pela mesma Orders API:
 
 from __future__ import annotations
 
+import logging
+
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
@@ -31,7 +33,9 @@ from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment, Plan
 from .mercadopago_client import MercadoPagoClient, MercadoPagoClientError
-from .status_mapping import map_order_status
+from .payment_confirmation_service import PaymentConfirmationError, PaymentConfirmationService
+
+logger = logging.getLogger(__name__)
 
 
 def _payer_email_for(*, email: str, environment: str) -> str:
@@ -232,12 +236,42 @@ class CheckoutService:
 
         payment.mp_order_id = result.order_id
         payment.mp_payment_id = result.payment_id
-        payment.status = map_order_status(result.status) or payment.status
         payment.last_sync_payload = result.raw
-        payment.save(update_fields=["mp_order_id", "mp_payment_id", "status", "last_sync_payload", "updated_at"])
+        payment.save(update_fields=["mp_order_id", "mp_payment_id", "last_sync_payload", "updated_at"])
 
-        # Confirmação real (paid/published) só acontece depois, via webhook.
+        # Pix normalmente volta action_required nesta resposta síncrona
+        # (nunca aprovado aqui, ver _payer_email_for/payer_first_name) — o
+        # Draft precisa refletir "pagamento em andamento" mesmo antes de
+        # qualquer confirmação. A chamada abaixo só avança o Draft além
+        # disso quando o resultado já vier aprovado (cartão); para Pix é
+        # um no-op e o Draft permanece exatamente aqui.
         draft.status = ExperienceDraft.Status.AWAITING_PAYMENT
         draft.save(update_fields=["status", "updated_at"])
+
+        # Confirmação síncrona: se a Mercado Pago já respondeu aprovado
+        # (cartão), aplica Payment=APPROVED/Draft=PAID agora, sem esperar o
+        # webhook — reaproveita a mesma decisão de estado que o webhook usa
+        # (PaymentConfirmationService.confirm_from_result), com o `result`
+        # que acabamos de receber: nenhuma chamada HTTP extra à Mercado
+        # Pago. O webhook continua sendo o mecanismo de reconciliação: se
+        # chegar depois, encontra tudo já aplicado e não faz nada
+        # (idempotente); numa corrida hipotética em que chegasse antes, o
+        # mesmo vale no sentido inverso.
+        try:
+            payment = PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+        except PaymentConfirmationError:
+            # Falha de negócio na confirmação (ex.: correlação divergente) —
+            # não deveria acontecer aqui (é a mesma Order que acabamos de
+            # criar), mas a Mercado Pago já aprovou o pagamento do lado
+            # dela: não é seguro transformar isso num erro para quem só quer
+            # saber que o pagamento foi aceito. Registrado para investigação
+            # (nunca escondido), e o webhook reconcilia depois.
+            logger.warning(
+                "Confirmação síncrona falhou para o Payment %s logo após a criação da Order %s; "
+                "Payment/Draft ficam como estavam até o webhook reconciliar.",
+                payment.id,
+                result.order_id,
+                exc_info=True,
+            )
 
         return payment

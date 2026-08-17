@@ -50,7 +50,14 @@ class OrderMismatch(PaymentConfirmationError):
 
 
 class PaymentConfirmationService:
-    """Ponto único de confirmação real de um Payment a partir de uma Order."""
+    """Ponto único de confirmação real de um Payment a partir de uma Order.
+
+    Dois pontos de entrada, uma única decisão: a confirmação assíncrona via
+    webhook (confirm_from_order_id, que busca o `result` com um GET) e a
+    confirmação síncrona logo após a criação da Order em
+    CheckoutService._create_order (que já tem o `result` em mãos, sem
+    chamada de rede extra) convergem para confirm_from_result — nenhuma das
+    duas duplica a lógica de transição de estado."""
 
     @staticmethod
     def confirm_from_order_id(*, mp_order_id: str, mp_client: MercadoPagoClient | None = None) -> Payment:
@@ -59,18 +66,27 @@ class PaymentConfirmationService:
         except Payment.DoesNotExist as exc:
             raise PaymentNotFound(f"Nenhum Payment local para mp_order_id={mp_order_id}.") from exc
 
-        if payment.owner_id != payment.draft.owner_id:
-            # Nunca deveria acontecer (CheckoutService sempre cria Payment com
-            # owner=draft.owner) — defesa em profundidade, não um caminho
-            # esperado. Ver regra "um usuário nunca acessa pagamento de outro".
-            raise OrderMismatch(f"Payment {payment.id} tem owner divergente do seu próprio draft.")
-
         client = mp_client or MercadoPagoClient()
         # MercadoPagoClientError (falha de rede/gateway/resposta inválida) se
         # propaga para o chamador: é uma falha TRANSIENTE, não uma decisão de
         # negócio — quem decide como reagir (ex.: pedir novo envio do webhook)
         # é a view, não este service.
         result = client.get_order(order_id=mp_order_id)
+
+        return PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+
+    @staticmethod
+    def confirm_from_result(*, payment: Payment, result: MercadoPagoOrderResult) -> Payment:
+        """Aplica um `result` já obtido (de qualquer origem) a um Payment já
+        carregado. Único ponto que decide a transição de estado Payment/Draft
+        — reaproveitado tanto pelo webhook quanto pela confirmação síncrona
+        do checkout."""
+
+        if payment.owner_id != payment.draft.owner_id:
+            # Nunca deveria acontecer (CheckoutService sempre cria Payment com
+            # owner=draft.owner) — defesa em profundidade, não um caminho
+            # esperado. Ver regra "um usuário nunca acessa pagamento de outro".
+            raise OrderMismatch(f"Payment {payment.id} tem owner divergente do seu próprio draft.")
 
         PaymentConfirmationService._validate_correlation(payment=payment, result=result)
         PaymentConfirmationService._apply_result(payment_id=payment.id, result=result)

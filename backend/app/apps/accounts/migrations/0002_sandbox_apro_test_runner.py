@@ -47,20 +47,13 @@ def create_sandbox_apro_runner(apps, schema_editor):
     )
     user.save()
 
-    # Emite um JWT válido para uso imediato na rota de teste. Impresso só
-    # no stdout do `migrate` (fica nos logs de deploy) — nunca gravado em
-    # arquivo versionado, código ou variável de ambiente.
-    try:
-        from rest_framework_simplejwt.tokens import RefreshToken
-
-        token = RefreshToken.for_user(user)
-        print(
-            "[sandbox-apro-runner] Conta técnica provisionada. "
-            "Access token (JWT) disponível nos logs deste deploy, "
-            f"válido por tempo limitado: {token.access_token}"
-        )
-    except Exception as exc:  # pragma: no cover - nunca deve impedir o deploy
-        print(f"[sandbox-apro-runner] Conta criada, mas falhou ao gerar o JWT: {exc}")
+    # A rota temporária que consumia este JWT (apps/payments/views/
+    # sandbox_apro_test.py) já foi removida (ver 0003_remove_sandbox_apro_test_runner
+    # e o commit que a excluiu) — nada mais lê este token, e 0003 já apaga
+    # esta conta logo em seguida. Gerar e imprimir um JWT aqui não teria mais
+    # nenhum uso e só exporia um access token válido nos logs de deploy sem
+    # necessidade nenhuma; removido de propósito (auditoria de produção).
+    print(f"[sandbox-apro-runner] Conta técnica provisionada (id={user.pk}).")
 
 
 def remove_sandbox_apro_runner(apps, schema_editor):

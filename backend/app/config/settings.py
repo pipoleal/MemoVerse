@@ -28,7 +28,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECRET_KEY, DEBUG and ALLOWED_HOSTS via environment variables.
 
 SECRET_KEY = config(
-    "SECRET_KEY", default="django-insecure-**f5&8s#wb(__j1n#cqpv^s2k-ft)o&b7ee37mbk98$ja&b+dp"
+    "SECRET_KEY",
+    default="django-insecure-**f5&8s#wb(__j1n#cqpv^s2k-ft)o&b7ee37mbk98$ja&b+dp",
 )
 
 DEBUG = config("DEBUG", default=True, cast=bool)
@@ -46,13 +47,10 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
     "corsheaders",
-
     "apps.accounts",
     "apps.experiences",
     "apps.payments",
-
     "rest_framework",
 ]
 
@@ -62,9 +60,7 @@ MIDDLEWARE = [
     # separate static host needed for this stage. Must stay right after
     # SecurityMiddleware (WhiteNoise's own requirement).
     "whitenoise.middleware.WhiteNoiseMiddleware",
-
     "corsheaders.middleware.CorsMiddleware",
-
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -99,10 +95,10 @@ WSGI_APPLICATION = "config.wsgi.application"
 # over when set. Without it, local dev keeps using the exact same SQLite
 # file as before — nothing about local development changes.
 
-DATABASE_URL = config("DATABASE_URL", default="")
+DATABASE_URL = config("DATABASE_URL", default="", cast=str)
 
 if DATABASE_URL:
-    DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
+    DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}  # type: ignore
 else:
     DATABASES = {
         "default": {
@@ -188,10 +184,11 @@ SIMPLE_JWT = {
 # CORS
 # ==========================
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+CORS_ALLOWED_ORIGINS = config(
+    "CORS_ALLOWED_ORIGINS",
+    default="http://localhost:3000,http://127.0.0.1:3000",
+    cast=Csv(),
+)
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -210,6 +207,15 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # Vazio por padrão (nada muda localmente). Em produção, defina com a URL
 # pública real, ex.: CSRF_TRUSTED_ORIGINS=https://my-backend.onrender.com
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
+
+# Segue o mesmo padrão do resto do arquivo: reproduz o comportamento local
+# atual por padrão (DEBUG=True -> cookies/redirect inseguros, como sempre
+# foi) e só fica estrito quando DEBUG=False for setado em produção. Pode
+# ainda ser sobrescrito individualmente via env se necessário.
+SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=not DEBUG, cast=bool)
+SESSION_COOKIE_SECURE = config("SESSION_COOKIE_SECURE", default=not DEBUG, cast=bool)
+CSRF_COOKIE_SECURE = config("CSRF_COOKIE_SECURE", default=not DEBUG, cast=bool)
+SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=0, cast=int)
 
 
 # Cloudflare R2 (S3-compatible storage)

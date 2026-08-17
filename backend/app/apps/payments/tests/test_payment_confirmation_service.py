@@ -331,3 +331,120 @@ class MpPaymentIdPersistenceTests(TestCase):
 
         payment.refresh_from_db()
         self.assertEqual(payment.mp_payment_id, "PAY-CONFIRMED-1")
+
+
+class ConfirmFromResultTests(TestCase):
+    """confirm_from_result é o método que CheckoutService._create_order chama
+    com o `result` já recebido da criação da Order (confirmação síncrona,
+    sem GET extra). Testado aqui diretamente, sem passar pela view HTTP de
+    checkout, para isolar a decisão de estado da orquestração de request."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.plan = Plan.objects.get(code="essential")
+
+    def test_approved_result_approves_payment_and_marks_draft_paid(self):
+        draft = make_draft(self.user)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="processed"
+        )
+
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.APPROVED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+
+    def test_action_required_result_does_not_touch_draft_beyond_awaiting_payment(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="action_required"
+        )
+
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.ACTION_REQUIRED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+    def test_rejected_result_does_not_mark_draft_paid(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="failed"
+        )
+
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.REJECTED)
+        self.assertNotEqual(draft.status, ExperienceDraft.Status.PAID)
+
+
+class SyncThenWebhookIdempotencyTests(TestCase):
+    """Os dois pontos de entrada (confirmação síncrona do checkout e webhook)
+    convergem para a mesma lógica — não importa a ordem de chegada nem
+    quantas vezes cada um roda, o resultado final é o mesmo e sem efeito
+    colateral duplicado."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.plan = Plan.objects.get(code="essential")
+
+    def test_sync_confirmation_followed_by_webhook_is_idempotent(self):
+        draft = make_draft(self.user)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="processed"
+        )
+
+        # 1) Confirmação síncrona (o que CheckoutService._create_order faz).
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+        paid_at_after_sync = draft.updated_at
+
+        # 2) Webhook chega depois, para a mesma Order, mesmo status aprovado.
+        PaymentConfirmationService.confirm_from_order_id(
+            mp_order_id=payment.mp_order_id, mp_client=fake_client(result)
+        )
+
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.APPROVED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+        # _mark_draft_paid não regrava um Draft já PAID: nenhum save() a
+        # mais, updated_at não muda no segundo caminho.
+        self.assertEqual(draft.updated_at, paid_at_after_sync)
+
+    def test_webhook_followed_by_sync_confirmation_is_idempotent(self):
+        draft = make_draft(self.user)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="processed"
+        )
+
+        # 1) Webhook chega primeiro (ordem invertida da esperada, mas o
+        # serviço não assume ordem nenhuma).
+        PaymentConfirmationService.confirm_from_order_id(
+            mp_order_id=payment.mp_order_id, mp_client=fake_client(result)
+        )
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+        paid_at_after_webhook = draft.updated_at
+
+        # 2) A confirmação síncrona roda depois (ex.: corrida improvável em
+        # produção, mas o service precisa se comportar bem mesmo assim).
+        payment.refresh_from_db()
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.APPROVED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+        self.assertEqual(draft.updated_at, paid_at_after_webhook)

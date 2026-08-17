@@ -188,6 +188,19 @@ class CheckoutPlanResolutionTests(TestCase):
         payment = Payment.objects.get(draft=self.draft)
         self.assertNotEqual(payment.idempotency_key, "hacked-key")
 
+    def test_status_sent_by_client_is_ignored(self):
+        # A serializer nem declara um campo "status" — mas o teste documenta
+        # a garantia explicitamente, em vez de depender só da ausência do
+        # campo. O mock devolve "action_required" (Pix): se o valor enviado
+        # pelo cliente tivesse qualquer efeito, o Payment sairia "approved".
+        with patch_mp_client():
+            self.client.post(
+                checkout_url(self.draft.id),
+                {"plan_code": "essential", "status": "approved"},
+            )
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertEqual(payment.status, Payment.Status.ACTION_REQUIRED)
+
     def test_inactive_plan_cannot_be_purchased(self):
         Plan.objects.create(code="inactive-plan", name="Inativo", price=Decimal("9.99"), is_active=False)
         with patch_mp_client():
@@ -804,6 +817,10 @@ class CheckoutCardConfirmationFlowTests(TestCase):
         self.assertEqual(payment.status, Payment.Status.APPROVED)
         self.assertEqual(payment.mp_order_id, "ORD01CARD")
         self.assertEqual(payment.mp_payment_id, "PAY01CARD")
+        # Confirmação síncrona: Draft já sai PAID desta mesma requisição,
+        # sem esperar o webhook (nenhum webhook foi chamado neste teste).
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.status, ExperienceDraft.Status.PAID)
 
     def test_rejected_card_payment_does_not_mark_draft_paid_or_published(self):
         with patch_mp_client_for_card(status="failed", status_detail="cc_rejected_other_reason"):
@@ -821,6 +838,63 @@ class CheckoutCardConfirmationFlowTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         payment = Payment.objects.get(draft=self.draft)
         self.assertIsNone(payment.mp_order_id)
+
+
+def publish_url(draft_id):
+    return f"/api/experiences/drafts/{draft_id}/publish/"
+
+
+class CheckoutToPublishIntegrationTests(TestCase):
+    """Reproduz de ponta a ponta o cenário real encontrado no teste E2E via
+    Docker: checkout com cartão aprovado -> Draft PAID -> POST /publish/
+    funciona imediatamente, sem qualquer webhook envolvido neste teste."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.client = auth_client(self.user)
+
+    def test_card_approval_allows_immediate_publish_without_webhook(self):
+        with patch_mp_client_for_card():
+            checkout_response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(checkout_response.status_code, status.HTTP_200_OK)
+
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.status, ExperienceDraft.Status.PAID)
+
+        publish_response = self.client.post(publish_url(self.draft.id), {})
+
+        self.assertEqual(publish_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(publish_response.data["slug"])
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.status, ExperienceDraft.Status.PUBLISHED)
+
+    def test_rejected_card_payment_still_blocks_publish(self):
+        with patch_mp_client_for_card(status="failed", status_detail="cc_rejected_other_reason"):
+            checkout_response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(checkout_response.status_code, status.HTTP_200_OK)
+
+        self.draft.refresh_from_db()
+        self.assertNotEqual(self.draft.status, ExperienceDraft.Status.PAID)
+
+        publish_response = self.client.post(publish_url(self.draft.id), {})
+
+        self.assertEqual(publish_response.status_code, status.HTTP_409_CONFLICT)
+        self.draft.refresh_from_db()
+        self.assertIsNone(self.draft.slug)
+
+    def test_pix_checkout_still_requires_webhook_before_publish(self):
+        # Pix não aprova sincronamente (action_required) — o comportamento
+        # anterior à correção permanece para este método de pagamento.
+        with patch_mp_client():
+            checkout_response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+        self.assertEqual(checkout_response.status_code, status.HTTP_200_OK)
+
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+        publish_response = self.client.post(publish_url(self.draft.id), {})
+        self.assertEqual(publish_response.status_code, status.HTTP_409_CONFLICT)
 
 
 class CheckoutResponsePaymentMethodTypeTests(TestCase):
