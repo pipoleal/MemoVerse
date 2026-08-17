@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import ExperienceViewer from "@/components/experience-view/ExperienceViewer";
 import type { Experience } from "@/components/experience/types";
@@ -15,14 +15,17 @@ type LoadState =
 export default function PublicExperienceView({ slug }: { slug: string }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
-  // Guards against React StrictMode's dev-only double-invoke of effects —
-  // without this, a fresh tab load would fire the request twice.
-  const hasFetchedRef = useRef(false);
-
   useEffect(() => {
-    if (hasFetchedRef.current) return;
-    hasFetchedRef.current = true;
-
+    // No mount-guard ref here on purpose: React StrictMode's dev-only
+    // double-invoke (mount -> cleanup -> mount again) previously interacted
+    // badly with a `hasFetchedRef` guard — the ref survived the simulated
+    // remount (blocking the second, real effect run) while `cancelled`
+    // below did not (it belongs to the first run's closure), so the first
+    // run's own cleanup permanently discarded its own fetch's result and
+    // the component was stuck on "loading" forever. `cancelled` alone is
+    // the correct/standard fix: StrictMode's extra run in dev issues one
+    // extra (harmless, cancelled) request, but every run's own fetch is
+    // resolved or discarded consistently by its own closure.
     let cancelled = false;
 
     fetchPublicExperience(slug)
