@@ -100,16 +100,23 @@ export default function PhotosStep() {
 
     setPhotoEntries((current) => [...current, ...newEntries]);
 
-    newEntries
-      .filter((entry) => entry.status === "local")
-      .forEach((entry) => {
-        void runUpload(entry.id, entry.file);
-      });
+    // Iterate filesToAdd (not newEntries) to keep `file` narrowed to the
+    // concrete File type — entry.file is optional on MediaEntry in general
+    // (server-loaded entries have none), but these entries were just built
+    // from filesToAdd above, so the 1:1 index correspondence is exact.
+    filesToAdd.forEach((file, index) => {
+      if (newEntries[index].status !== "local") return;
+      void runUpload(newEntries[index].id, file);
+    });
 
     event.target.value = "";
   }
 
   function retryUpload(entry: MediaEntry) {
+    // entry.file is only absent for server-loaded entries, which are never
+    // status:"error" (the only status that renders the retry button) — the
+    // guard is for TypeScript, not a real runtime case.
+    if (!entry.file) return;
     void runUpload(entry.id, entry.file);
   }
 
@@ -299,23 +306,30 @@ export default function PhotosStep() {
                           </button>
                         )}
 
-                        <button
-                          type="button"
-                          onClick={() => removePhoto(entry.id)}
-                          className="
-                            rounded-full
-                            bg-black/70
-                            px-3
-                            py-2
-                            text-xs
-                            font-semibold
-                            text-white
-                            transition-colors
-                            hover:bg-red-500
-                          "
-                        >
-                          Remover
-                        </button>
+                        {/* Server-loaded entries (resuming a draft) have no
+                            delete endpoint behind this button — offering it
+                            would remove the entry locally while the backend
+                            still counts the photo as attached, a silently
+                            broken action rather than a real one. */}
+                        {!entry.fromServer && (
+                          <button
+                            type="button"
+                            onClick={() => removePhoto(entry.id)}
+                            className="
+                              rounded-full
+                              bg-black/70
+                              px-3
+                              py-2
+                              text-xs
+                              font-semibold
+                              text-white
+                              transition-colors
+                              hover:bg-red-500
+                            "
+                          >
+                            Remover
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -39,6 +39,51 @@ export function toPayload(experience: Experience): DraftPayload {
   };
 }
 
+// Exactly the shape of apps.experiences.serializers.ExperienceDraftSerializer
+// (GET /experiences/drafts/<id>/) — the same endpoint DraftDetailView already
+// exposed; nothing new added backend-side beyond `slug` (previous task) and
+// `media[].url` (this task, see MediaSerializer).
+export type DraftMediaItem = {
+  id: string;
+  media_type: "photo" | "video";
+  original_filename: string;
+  upload_status: "pending" | "uploaded" | "failed";
+  sort_order: number;
+  url: string | null;
+};
+
+export type DraftDetail = DraftPayload & {
+  id: string;
+  status: string;
+  slug: string | null;
+  media: DraftMediaItem[];
+};
+
+export async function fetchDraft(draftId: string): Promise<DraftDetail> {
+  const response = await api.get<DraftDetail>(`/experiences/drafts/${draftId}/`);
+  return response.data;
+}
+
+// Inverse of toPayload — only the fields the wizard can actually resume
+// (media is handled separately by the caller via photoEntries/videoEntries,
+// since it maps to MediaEntry, not a plain Experience field).
+export function fromPayload(payload: DraftPayload): Omit<Experience, "photos" | "videos" | "published"> {
+  return {
+    type: payload.experience_type,
+    theme: payload.theme,
+    title: payload.title,
+    recipient: payload.recipient_name,
+    creator: payload.creator_name,
+    eventDate: payload.event_date ?? "",
+    letter: payload.letter,
+    shortMessage: payload.short_message,
+    music: {
+      provider: payload.music_provider,
+      url: payload.music_url,
+    },
+  };
+}
+
 function isSameDraft(draft: DraftPayload & { id: string }, payload: DraftPayload) {
   return Object.entries(payload).every(([key, value]) => draft[key as keyof DraftPayload] === value);
 }

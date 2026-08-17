@@ -13,7 +13,7 @@ import {
 } from "react";
 
 import { api } from "@/lib/api";
-import { toPayload } from "@/lib/pendingExperience";
+import { fetchDraft, fromPayload, toPayload } from "@/lib/pendingExperience";
 import { getAccessToken } from "@/lib/storage";
 
 import {
@@ -27,12 +27,24 @@ export interface MediaEntry {
   // Stable client-side id, independent of array position — removal and
   // concurrent uploads target entries by id, never by index.
   id: string;
-  file: File;
+  // Absent only for entries loaded from an already-uploaded server Media
+  // (resuming a draft) — there is no local File object for those, and
+  // nothing needs one: retryUpload() is only ever reachable from a
+  // status:"error" entry, which a server-loaded entry (status:"uploaded")
+  // never is.
+  file?: File;
   previewUrl: string;
   status: MediaUploadStatus;
   progress: number;
   mediaId?: string;
   errorMessage?: string;
+  // True for entries loaded from the server when resuming an existing
+  // draft. Steps use this to hide the "Remover" action for them — there is
+  // no delete endpoint for already-uploaded media (out of scope for this
+  // fix), so offering a button that only removes the entry locally, while
+  // the backend still counts it toward the published experience, would be
+  // a silently broken action rather than a real one.
+  fromServer?: boolean;
 }
 
 type ExperienceContextType = {
@@ -57,6 +69,10 @@ type ExperienceContextType = {
 
   videoEntries: MediaEntry[];
   setVideoEntries: Dispatch<SetStateAction<MediaEntry[]>>;
+
+  // Only meaningful when the provider was mounted with initialDraftId.
+  isLoadingInitialDraft: boolean;
+  initialDraftLoadError: string | null;
 };
 
 const ExperienceContext =
@@ -64,14 +80,23 @@ const ExperienceContext =
 
 export function ExperienceProvider({
   children,
+  initialDraftId,
 }: {
   children: ReactNode;
+  // When set, the provider loads this existing draft's data (text fields +
+  // already-uploaded media) instead of starting from initialExperience —
+  // this is what lets the Dashboard's "Continuar edição" action resume a
+  // draft instead of silently starting a new one.
+  initialDraftId?: string;
 }) {
   const [experience, setExperience] =
     useState<Experience>(initialExperience);
 
   const [draftId, setDraftId] = useState<string | null>(null);
   const ensureDraftPromiseRef = useRef<Promise<string | null> | null>(null);
+
+  const [isLoadingInitialDraft, setIsLoadingInitialDraft] = useState(Boolean(initialDraftId));
+  const [initialDraftLoadError, setInitialDraftLoadError] = useState<string | null>(null);
 
   // ensureDraftId must always read the *latest* experience fields (title,
   // recipient, etc. filled in steps 1-3) even though the callback identity
@@ -127,6 +152,66 @@ export function ExperienceProvider({
     return promise;
   }, [draftId]);
 
+  // Loads an existing draft's data when the provider is mounted to resume
+  // one (Dashboard "Continuar edição"). `cancelled` alone (no mount-guard
+  // ref) is deliberate — see PublicExperienceView.tsx for why a ref-based
+  // guard combined with this pattern previously caused a permanent loading
+  // state under React StrictMode's dev-only double-invoke: the ref would
+  // survive the simulated remount and block the second, real effect run,
+  // while `cancelled` (scoped to each run's own closure) would not, so the
+  // first run's own cleanup discarded its own fetch's result. This effect
+  // avoids that class of bug entirely by not using a mount-guard ref.
+  useEffect(() => {
+    if (!initialDraftId) return;
+
+    let cancelled = false;
+
+    fetchDraft(initialDraftId)
+      .then((draft) => {
+        if (cancelled) return;
+        setDraftId(draft.id);
+        setExperience((previous) => ({ ...previous, ...fromPayload(draft) }));
+        setPhotoEntries(
+          draft.media
+            .filter((item) => item.media_type === "photo" && item.upload_status === "uploaded" && item.url)
+            .map((item) => ({
+              id: item.id,
+              mediaId: item.id,
+              previewUrl: item.url as string,
+              status: "uploaded",
+              progress: 100,
+              fromServer: true,
+            }))
+        );
+        setVideoEntries(
+          draft.media
+            .filter((item) => item.media_type === "video" && item.upload_status === "uploaded" && item.url)
+            .map((item) => ({
+              id: item.id,
+              mediaId: item.id,
+              previewUrl: item.url as string,
+              status: "uploaded",
+              progress: 100,
+              fromServer: true,
+            }))
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInitialDraftLoadError(
+          "Não foi possível carregar esta experiência para edição. Tente novamente em instantes."
+        );
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsLoadingInitialDraft(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialDraftId]);
+
   return (
     <ExperienceContext.Provider
       value={{
@@ -138,6 +223,8 @@ export function ExperienceProvider({
         setPhotoEntries,
         videoEntries,
         setVideoEntries,
+        isLoadingInitialDraft,
+        initialDraftLoadError,
       }}
     >
       {children}

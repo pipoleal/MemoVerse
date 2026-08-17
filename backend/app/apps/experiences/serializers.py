@@ -1,16 +1,36 @@
+from django.core.exceptions import ImproperlyConfigured
 from rest_framework import serializers
 
 from .models import ExperienceDraft, Media
+from .storage import generate_presigned_read_url
 
 
 class MediaSerializer(serializers.ModelSerializer):
+    # A readable URL for the OWNER's own media (used by the wizard to resume
+    # a draft and show already-uploaded photos/videos). generate_presigned_read_url
+    # signs the URL locally (no network round-trip to R2, no extra query per
+    # item) — the exact same function PublicExperienceView already uses, just
+    # scoped here to the draft's own owner via the normal IsAuthenticated +
+    # get_owned_draft_or_404 chain in views.py. None (not an error) when R2
+    # isn't configured or the object hasn't finished uploading yet, matching
+    # the graceful-degradation pattern already used elsewhere in this app.
+    url = serializers.SerializerMethodField()
+
     class Meta:
         model = Media
         fields = (
             "id", "media_type", "original_filename", "mime_type", "size_bytes",
-            "duration_seconds", "sort_order", "upload_status", "uploaded_at", "created_at",
+            "duration_seconds", "sort_order", "upload_status", "uploaded_at", "created_at", "url",
         )
         read_only_fields = fields
+
+    def get_url(self, media: Media) -> str | None:
+        if media.upload_status != Media.UploadStatus.UPLOADED:
+            return None
+        try:
+            return generate_presigned_read_url(media.storage_key)
+        except ImproperlyConfigured:
+            return None
 
 
 class ExperienceDraftSerializer(serializers.ModelSerializer):

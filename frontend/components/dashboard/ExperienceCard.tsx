@@ -20,21 +20,17 @@ type ExperienceCardProps = {
 // Resume/access action per status. Every target here already exists and
 // works today (CheckoutView already resumes checkout / shows the publish
 // step based on payment status; /e/[slug] already renders a published
-// experience) — this only wires the Dashboard card into those existing
-// routes, no new flow is created.
-//
-// "draft" (not yet in checkout) intentionally has no action: there is no
-// existing way to reload a draft's data back into the creation wizard
-// (ExperienceContext only ever creates a NEW draft, never fetches one), so
-// linking it anywhere here would either be a dead end or, worse, sending
-// the user into /checkout/[draftId] would auto-start a real payment
-// attempt for a possibly-incomplete draft. Left as a known follow-up.
+// experience; /experience/edit/[draftId] loads the draft's own data back
+// into the wizard, see ExperienceContext's initialDraftId) — this only
+// wires the Dashboard card into those routes, no new flow beyond that.
 function getCardAction(
   status: string,
   id: string,
   slug: string | null
 ): { label: string; href: string } | null {
   switch (status) {
+    case "draft":
+      return { label: "Continuar edição", href: `/experience/edit/${id}` };
     case "awaiting_payment":
       return { label: "Continuar pagamento", href: `/checkout/${id}` };
     case "payment_failed":

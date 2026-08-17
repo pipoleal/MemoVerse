@@ -92,16 +92,20 @@ export default function VideosStep() {
 
     setVideoEntries((current) => [...current, ...newEntries]);
 
-    newEntries
-      .filter((entry) => entry.status === "local")
-      .forEach((entry) => {
-        void runUpload(entry.id, entry.file);
-      });
+    // See PhotosStep for why this iterates videoFiles (not newEntries) to
+    // keep `file` narrowed to the concrete File type.
+    videoFiles.forEach((file, index) => {
+      if (newEntries[index].status !== "local") return;
+      void runUpload(newEntries[index].id, file);
+    });
 
     event.target.value = "";
   }
 
   function retryUpload(entry: MediaEntry) {
+    // See PhotosStep for why this guard exists (entry.file is only absent
+    // for server-loaded entries, which are never status:"error").
+    if (!entry.file) return;
     void runUpload(entry.id, entry.file);
   }
 
@@ -293,23 +297,27 @@ export default function VideosStep() {
                           </button>
                         )}
 
-                        <button
-                          type="button"
-                          onClick={() => removeVideo(entry.id)}
-                          className="
-                            rounded-full
-                            bg-white/10
-                            px-4
-                            py-2
-                            text-xs
-                            font-semibold
-                            text-white
-                            transition-colors
-                            hover:bg-red-500
-                          "
-                        >
-                          Remover
-                        </button>
+                        {/* See PhotosStep for why server-loaded entries
+                            don't get a Remover button. */}
+                        {!entry.fromServer && (
+                          <button
+                            type="button"
+                            onClick={() => removeVideo(entry.id)}
+                            className="
+                              rounded-full
+                              bg-white/10
+                              px-4
+                              py-2
+                              text-xs
+                              font-semibold
+                              text-white
+                              transition-colors
+                              hover:bg-red-500
+                            "
+                          >
+                            Remover
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
