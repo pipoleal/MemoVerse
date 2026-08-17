@@ -14,7 +14,11 @@ from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment, Plan
 from ..services.checkout_service import CheckoutService, _payer_email_for
-from ..services.mercadopago_client import MercadoPagoGatewayError, MercadoPagoOrderResult
+from ..services.mercadopago_client import (
+    MercadoPagoConfigurationError,
+    MercadoPagoGatewayError,
+    MercadoPagoOrderResult,
+)
 
 User = get_user_model()
 
@@ -835,6 +839,29 @@ class CheckoutCardConfirmationFlowTests(TestCase):
     def test_card_gateway_failure_returns_502_and_does_not_create_order(self):
         with patch_mp_client(raise_error=True):
             response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertIsNone(payment.mp_order_id)
+
+
+class CheckoutMissingConfigurationTests(TestCase):
+    """MP_ACCESS_TOKEN ausente/inválido é uma falha de configuração do
+    servidor (MercadoPagoClient() levanta MercadoPagoConfigurationError no
+    __init__, antes de qualquer chamada de rede) — deve virar 502, o mesmo
+    tratamento de uma falha de gateway, nunca um 500 cru vazando detalhe
+    interno de configuração para o cliente."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.client = auth_client(self.user)
+
+    def test_missing_access_token_returns_502_instead_of_500(self):
+        with patch(
+            "apps.payments.services.checkout_service.MercadoPagoClient",
+            side_effect=MercadoPagoConfigurationError("MP_ACCESS_TOKEN não configurado."),
+        ):
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         payment = Payment.objects.get(draft=self.draft)
         self.assertIsNone(payment.mp_order_id)

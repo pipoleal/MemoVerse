@@ -111,10 +111,20 @@ class CheckoutService:
             # da tentativa que a criou.
             return payment
 
+        if mp_client is None:
+            try:
+                mp_client = MercadoPagoClient()
+            except MercadoPagoClientError as exc:
+                # Configuração ausente/inválida (ex.: MP_ACCESS_TOKEN não setado)
+                # é uma falha de gateway do ponto de vista do chamador — mesmo
+                # tratamento/502 que uma falha na chamada real à Mercado Pago,
+                # nunca um 500 cru vazando detalhe de configuração do servidor.
+                raise CheckoutGatewayError(payment, exc) from exc
+
         return CheckoutService._create_order(
             payment=payment,
             draft=draft,
-            mp_client=mp_client or MercadoPagoClient(),
+            mp_client=mp_client,
             payer_first_name=payer_first_name,
             payment_method=payment_method,
             card_token=card_token,

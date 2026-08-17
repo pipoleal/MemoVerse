@@ -5,7 +5,7 @@
 ## Itens pendentes conhecidos
 
 - [ ] Corrigir o bug de carregamento infinito em `PublicExperienceView.tsx` (ver `docs/ai/CURRENT_STATE.md` e `docs/ai/ARCHITECTURE.md`).
-- [ ] Corrigir o tratamento de exceção em `CheckoutService.start_checkout` para que `MercadoPagoConfigurationError` vire `CheckoutGatewayError` (502) em vez de vazar como 500.
+- [x] Corrigir o tratamento de exceção em `CheckoutService.start_checkout` para que `MercadoPagoConfigurationError` vire `CheckoutGatewayError` (502) em vez de vazar como 500.
 - [ ] Revisar a mensagem de erro em `LoginForm.tsx` para não implicar "credenciais erradas" quando o login em si teve sucesso.
 - [ ] Testar upload real de vídeo (não testado ainda — sem `ffmpeg`/ativo de teste disponível no ambiente).
 - [ ] Configurar credenciais reais (`MP_ACCESS_TOKEN`, R2) em `.env` local quando for necessário testar o fluxo de pagamento/upload real de ponta a ponta.
