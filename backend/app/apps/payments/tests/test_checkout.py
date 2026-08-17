@@ -4,7 +4,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.db import OperationalError
+from django.db import OperationalError, connection
 from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -331,27 +331,37 @@ class CheckoutConcurrencyTests(TransactionTestCase):
         errors = []
 
         def worker():
-            fake_client = MagicMock()
-            fake_client.create_order.return_value = make_mp_result()
-            barrier.wait(timeout=5)
-            # SQLite (usado nos testes) não enfileira escritores como o Postgres
-            # de produção faz sob select_for_update: sob contenção real ele pode
-            # recusar a escrita na hora (OperationalError) em vez de esperar a
-            # outra transação. Um cliente real trataria isso como "tente
-            # novamente" — simulamos esse retry aqui. O que o teste garante é o
-            # resultado final (nunca duas tentativas ativas), não a ausência de
-            # contenção no SGBD de teste.
-            for attempt in range(5):
-                try:
-                    CheckoutService.start_checkout(draft=draft, plan=plan, mp_client=fake_client)
-                    return
-                except OperationalError:
-                    if attempt == 4:
-                        raise
-                    time.sleep(0.05 * (attempt + 1))
-                except Exception as exc:  # noqa: BLE001 - surfaced via `errors` for assertions below
-                    errors.append(exc)
-                    return
+            # Each thread gets its own lazily-opened Django DB connection;
+            # against SQLite (this test's original assumption, see comment
+            # below) a leaked one is harmless, but against real Postgres
+            # (this repo's Docker dev environment) it stays open as a real
+            # backend session after the thread exits, blocking the test DB's
+            # teardown DROP DATABASE at the end of the full suite. Always
+            # close it on the way out, success or failure.
+            try:
+                fake_client = MagicMock()
+                fake_client.create_order.return_value = make_mp_result()
+                barrier.wait(timeout=5)
+                # SQLite (usado nos testes) não enfileira escritores como o Postgres
+                # de produção faz sob select_for_update: sob contenção real ele pode
+                # recusar a escrita na hora (OperationalError) em vez de esperar a
+                # outra transação. Um cliente real trataria isso como "tente
+                # novamente" — simulamos esse retry aqui. O que o teste garante é o
+                # resultado final (nunca duas tentativas ativas), não a ausência de
+                # contenção no SGBD de teste.
+                for attempt in range(5):
+                    try:
+                        CheckoutService.start_checkout(draft=draft, plan=plan, mp_client=fake_client)
+                        return
+                    except OperationalError:
+                        if attempt == 4:
+                            raise
+                        time.sleep(0.05 * (attempt + 1))
+                    except Exception as exc:  # noqa: BLE001 - surfaced via `errors` for assertions below
+                        errors.append(exc)
+                        return
+            finally:
+                connection.close()
 
         def run_worker():
             try:

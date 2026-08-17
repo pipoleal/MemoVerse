@@ -6,7 +6,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.db import OperationalError
+from django.db import OperationalError, connection
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 
 from apps.experiences.models import ExperienceDraft
@@ -503,26 +503,34 @@ class WebhookConcurrencyTests(TransactionTestCase):
         errors = []
 
         def worker():
-            client = Client()
-            barrier.wait(timeout=5)
-            # SQLite (usado nos testes) pode recusar a escrita na hora
-            # (OperationalError) em vez de enfileirar o escritor como o
-            # Postgres de produção faz. Um cliente real trataria isso como
-            # "tente novamente" — simulamos esse retry aqui, sem re-sincronizar
-            # no barrier (só a primeira investida precisa ser simultânea).
-            for attempt in range(5):
-                try:
-                    with patch_confirmation_mp_client(
-                        order_id=payment.mp_order_id,
-                        external_reference=payment.external_reference,
-                        status="processed",
-                    ):
-                        post_webhook(client, notification_id="concurrent-1", resource_id=payment.mp_order_id)
-                    return
-                except OperationalError:
-                    if attempt == 4:
-                        raise
-                    time.sleep(0.05 * (attempt + 1))
+            # See CheckoutConcurrencyTests.worker (test_checkout.py) for why
+            # this thread's Django DB connection must be closed explicitly:
+            # against real Postgres (this repo's Docker dev environment) a
+            # leaked one stays open as a server session past thread exit and
+            # blocks the test DB's teardown at the end of the full suite.
+            try:
+                client = Client()
+                barrier.wait(timeout=5)
+                # SQLite (usado nos testes) pode recusar a escrita na hora
+                # (OperationalError) em vez de enfileirar o escritor como o
+                # Postgres de produção faz. Um cliente real trataria isso como
+                # "tente novamente" — simulamos esse retry aqui, sem re-sincronizar
+                # no barrier (só a primeira investida precisa ser simultânea).
+                for attempt in range(5):
+                    try:
+                        with patch_confirmation_mp_client(
+                            order_id=payment.mp_order_id,
+                            external_reference=payment.external_reference,
+                            status="processed",
+                        ):
+                            post_webhook(client, notification_id="concurrent-1", resource_id=payment.mp_order_id)
+                        return
+                    except OperationalError:
+                        if attempt == 4:
+                            raise
+                        time.sleep(0.05 * (attempt + 1))
+            finally:
+                connection.close()
 
         def run_worker():
             try:

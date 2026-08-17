@@ -391,11 +391,15 @@ class PresignedReadUrlTests(TestCase):
             self.assertNotIn("super-secret-key", serialized_call)
 
     def test_raises_when_r2_is_not_configured(self):
-        # Ambiente de teste não define nenhuma credencial R2 por padrão
-        # (settings.py: default=""), então get_r2_client() real (não
-        # mockado) levanta antes de qualquer tentativa de rede.
-        with self.assertRaises(ImproperlyConfigured):
-            storage.generate_presigned_read_url("some-key")
+        # Simula explicitamente R2 não configurado, mockando get_r2_client
+        # para levantar — não depende de o ambiente de teste ter ou não
+        # credenciais reais (o .env de dev pode ter R2 configurado).
+        with patch(
+            "apps.experiences.storage.get_r2_client",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            with self.assertRaises(ImproperlyConfigured):
+                storage.generate_presigned_read_url("some-key")
 
 
 class MediaUploadIntentRegressionTests(TestCase):
@@ -455,11 +459,17 @@ class MediaUploadIntentRegressionTests(TestCase):
         self.assertEqual(Media.objects.filter(draft=self.draft).count(), 10)
 
     def test_r2_not_configured_returns_503_and_cleans_up_media_row(self):
-        # Sem mock: ambiente de teste não tem credenciais R2 configuradas.
-        response = auth_client(self.owner).post(
-            upload_intent_url(self.draft.id),
-            {"media_type": "photo", "filename": "foto.jpg", "mime_type": "image/jpeg", "size_bytes": 1000},
-        )
+        # Simula explicitamente R2 não configurado (não depende de o
+        # ambiente de teste ter ou não credenciais reais — o .env de dev
+        # pode ter R2 configurado, e o teste precisa continuar valendo).
+        with patch(
+            "apps.experiences.views.get_r2_client",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            response = auth_client(self.owner).post(
+                upload_intent_url(self.draft.id),
+                {"media_type": "photo", "filename": "foto.jpg", "mime_type": "image/jpeg", "size_bytes": 1000},
+            )
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertEqual(Media.objects.count(), 0)
 
@@ -654,9 +664,15 @@ class PublicExperienceViewTests(TestCase):
 
     def test_r2_not_configured_returns_503(self):
         make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
-        # Sem mock: ambiente de teste não tem credenciais R2 configuradas,
-        # então generate_presigned_read_url real levanta ImproperlyConfigured.
-        response = self.client.get(public_url(self.draft.slug))
+        # Simula explicitamente R2 não configurado (mesmo padrão de
+        # _patch_presigned_url, mas levantando) — não depende de o ambiente
+        # de teste ter ou não credenciais reais (o .env de dev pode ter R2
+        # configurado, e este teste precisa continuar valendo mesmo assim).
+        with patch(
+            "apps.experiences.views.generate_presigned_read_url",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            response = self.client.get(public_url(self.draft.slug))
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
 
     def test_presigned_url_is_generated_with_the_correct_storage_key(self):
