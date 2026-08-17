@@ -11,10 +11,15 @@ Regras de negócio que vivem aqui (e não na view):
 - chamada à MercadoPagoClient (única forma de a camada de domínio falar com
   a Mercado Pago) e persistência do resultado normalizado.
 
-MVP: a Order é sempre criada com Pix (`payment_method={id: pix, type:
-bank_transfer}`). É o único meio de pagamento cujos dados obrigatórios já
-existem hoje no domínio (payer.email) e que não depende de um token gerado
-no cliente — cartão via Checkout Bricks é escopo da Fase 6.
+Dois meios de pagamento suportados, sempre pela mesma Orders API:
+- Pix: `payment_method={id: pix, type: bank_transfer}` — payload construído
+  inteiramente pelo backend, nenhum dado vindo do cliente.
+- Cartão (Card Payment Brick): `payment_method={id, type: credit_card,
+  token, installments}` — id/token/installments vêm do Brick (nunca número
+  de cartão/CVV, que o Brick nunca entrega a este backend); type é fixo
+  "credit_card" neste primeiro escopo (débito fica para uma iteração
+  seguinte: o formData do Brick, confirmado via documentação oficial, não
+  distingue credit/debit, só payment_method_id/token/installments).
 """
 
 from __future__ import annotations
@@ -83,6 +88,10 @@ class CheckoutService:
         plan: Plan,
         mp_client: MercadoPagoClient | None = None,
         payer_first_name: str | None = None,
+        payment_method: str = "pix",
+        card_token: str | None = None,
+        card_payment_method_id: str | None = None,
+        card_installments: int | None = None,
     ) -> Payment:
         # payer_first_name: opt-in explícito, nunca aceito via HTTP (a view
         # nunca passa esse argumento). Existe só para permitir, sob demanda
@@ -93,7 +102,9 @@ class CheckoutService:
 
         if payment.mp_order_id:
             # Order já criada em uma tentativa anterior (retomada de checkout):
-            # não repetir a chamada à MP.
+            # não repetir a chamada à MP. payment_method/card_* do chamador
+            # atual são ignorados neste caso — a Order já existe com o método
+            # da tentativa que a criou.
             return payment
 
         return CheckoutService._create_order(
@@ -101,6 +112,10 @@ class CheckoutService:
             draft=draft,
             mp_client=mp_client or MercadoPagoClient(),
             payer_first_name=payer_first_name,
+            payment_method=payment_method,
+            card_token=card_token,
+            card_payment_method_id=card_payment_method_id,
+            card_installments=card_installments,
         )
 
     @staticmethod
@@ -170,6 +185,10 @@ class CheckoutService:
         draft: ExperienceDraft,
         mp_client: MercadoPagoClient,
         payer_first_name: str | None = None,
+        payment_method: str = "pix",
+        card_token: str | None = None,
+        card_payment_method_id: str | None = None,
+        card_installments: int | None = None,
     ) -> Payment:
         payer = {"email": _payer_email_for(email=draft.owner.email, environment=mp_client.environment)}
         # Segunda trava, independente da chamadora: o mecanismo "APRO" de
@@ -178,6 +197,21 @@ class CheckoutService:
         # nunca chega à Mercado Pago em produção.
         if payer_first_name and mp_client.environment == "sandbox":
             payer["first_name"] = payer_first_name
+
+        if payment_method == "card":
+            # Payload confirmado via documentação oficial da Orders API
+            # (não inventado): id/type/token/installments. issuer_id
+            # deliberadamente NUNCA incluído aqui — não confirmado no
+            # schema documentado deste endpoint, mesmo sendo devolvido pelo
+            # Brick ao frontend.
+            order_payment_method = {
+                "id": card_payment_method_id,
+                "type": "credit_card",
+                "token": card_token,
+                "installments": card_installments,
+            }
+        else:
+            order_payment_method = {"id": "pix", "type": "bank_transfer"}
 
         try:
             result = mp_client.create_order(
@@ -189,7 +223,7 @@ class CheckoutService:
                 payments=[
                     {
                         "amount": f"{payment.amount:.2f}",
-                        "payment_method": {"id": "pix", "type": "bank_transfer"},
+                        "payment_method": order_payment_method,
                     }
                 ],
             )

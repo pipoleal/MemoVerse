@@ -15,6 +15,21 @@ export type CheckoutArtifacts = {
   qr_code?: string;
   qr_code_base64?: string;
   ticket_url?: string;
+  // "bank_transfer" (Pix) or "credit_card"/"debit_card" (card) — lets a
+  // resumed checkout know which UI to show without guessing.
+  payment_method_type?: string;
+};
+
+export type PaymentMethodChoice = "pix" | "card";
+
+// Exactly the fields the Card Payment Brick's onSubmit callback provides
+// (token, payment_method_id, installments — issuer_id optional) — never the
+// card number/CVV, which the Brick never gives the frontend either.
+export type CardCheckoutData = {
+  token: string;
+  paymentMethodId: string;
+  installments: number;
+  issuerId?: string;
 };
 
 // Mirrors apps/payments/models.py Payment.Status exactly.
@@ -62,10 +77,25 @@ export async function fetchDraftPaymentStatus(draftId: string): Promise<DraftPay
 // active Payment already exists for this draft+plan, it is reused (no new
 // Mercado Pago Order is created) — see CheckoutService.start_checkout. Safe
 // to call again on remount/page reload/retry after a gateway error.
-export async function createOrResumeCheckout(draftId: string, planCode: string): Promise<CheckoutResponse> {
-  const response = await api.post<CheckoutResponse>(`/payments/drafts/${draftId}/checkout/`, {
-    plan_code: planCode,
-  });
+//
+// card is only read when method === "card" — for "pix" the request body is
+// exactly {plan_code} as before, unchanged.
+export async function createOrResumeCheckout(
+  draftId: string,
+  planCode: string,
+  method: PaymentMethodChoice = "pix",
+  card?: CardCheckoutData
+): Promise<CheckoutResponse> {
+  const body: Record<string, unknown> = { plan_code: planCode, payment_method: method };
+
+  if (method === "card" && card) {
+    body.token = card.token;
+    body.payment_method_id = card.paymentMethodId;
+    body.installments = card.installments;
+    if (card.issuerId) body.issuer_id = card.issuerId;
+  }
+
+  const response = await api.post<CheckoutResponse>(`/payments/drafts/${draftId}/checkout/`, body);
   return response.data;
 }
 

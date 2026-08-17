@@ -12,8 +12,10 @@ from ..services.checkout_service import ActiveCheckoutConflict, CheckoutGatewayE
 
 
 def _checkout_payload_for(payment: Payment) -> dict:
-    """Só os dados de continuação de checkout que já existem hoje (Pix). Nada
-    específico do Checkout Bricks (Fase 6) é inventado aqui."""
+    """Dados de continuação de checkout derivados do último payload real
+    sincronizado com a Mercado Pago (Pix e cartão). Nada é inventado aqui —
+    tudo vem de last_sync_payload, já persistido pela criação/consulta da
+    Order."""
 
     checkout = {"mp_order_id": payment.mp_order_id}
     order_payments = ((payment.last_sync_payload or {}).get("transactions") or {}).get("payments") or []
@@ -22,6 +24,11 @@ def _checkout_payload_for(payment: Payment) -> dict:
         for key in ("qr_code", "qr_code_base64", "ticket_url"):
             if key in payment_method:
                 checkout[key] = payment_method[key]
+        # "bank_transfer" (Pix) ou "credit_card"/"debit_card" (cartão) — deixa
+        # o frontend saber, ao retomar um checkout já existente, qual UI
+        # mostrar sem precisar adivinhar ou guardar esse dado em outro lugar.
+        if "type" in payment_method:
+            checkout["payment_method_type"] = payment_method["type"]
     return checkout
 
 
@@ -41,10 +48,18 @@ class DraftCheckoutView(APIView):
 
         serializer = CheckoutRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        plan = serializer.validated_data["plan_code"]
+        data = serializer.validated_data
+        plan = data["plan_code"]
 
         try:
-            payment = CheckoutService.start_checkout(draft=draft, plan=plan)
+            payment = CheckoutService.start_checkout(
+                draft=draft,
+                plan=plan,
+                payment_method=data["payment_method"],
+                card_token=data.get("token"),
+                card_payment_method_id=data.get("payment_method_id"),
+                card_installments=data.get("installments"),
+            )
         except ActiveCheckoutConflict as exc:
             return Response(
                 {

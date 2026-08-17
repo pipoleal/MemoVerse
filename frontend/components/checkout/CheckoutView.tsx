@@ -2,13 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import CardPaymentBlock from "./CardPaymentBlock";
 import {
   createOrResumeCheckout,
   extractCheckoutErrorMessage,
   fetchDraftPaymentStatus,
   getActiveConflictPlanCode,
   FAILED_PAYMENT_STATUSES,
+  type CardCheckoutData,
   type CheckoutResponse,
+  type PaymentMethodChoice,
   type PaymentStatus,
 } from "@/lib/checkout";
 import { extractPublishErrorMessage, publishDraft } from "@/lib/publish";
@@ -20,12 +23,26 @@ import { extractPublishErrorMessage, publishDraft } from "@/lib/publish";
 // This is a placeholder until a real plan-selection step exists.
 const DEFAULT_PLAN_CODE = "essential";
 
+// Same placeholder debt as DEFAULT_PLAN_CODE above: no plans endpoint exists
+// yet for the frontend to read a real price from. The Card Payment Brick
+// requires a numeric `initialization.amount` purely to render its own
+// installment/fee simulator — this value is NEVER sent to the backend as
+// the charge amount and is NEVER trusted by it either way (Payment.amount is
+// always frozen server-side from Plan.price — see
+// CheckoutService._create_attempt). Matches the "essential" plan's price
+// from apps/payments/migrations/0002_seed_initial_plans.py.
+const DEFAULT_PLAN_DISPLAY_AMOUNT = 29.99;
+
 const POLL_INTERVAL_MS = 5000;
 
 type Phase =
   | { kind: "loading" }
-  | { kind: "creating" }
-  | { kind: "awaiting_payment"; checkout: CheckoutResponse }
+  // No payment exists yet for this draft: the user must actively choose Pix
+  // or Cartão before any Payment/Order is created — see startCheckout, only
+  // ever called from here after an explicit choice.
+  | { kind: "selecting_method" }
+  | { kind: "creating"; method: PaymentMethodChoice }
+  | { kind: "awaiting_payment"; checkout: CheckoutResponse; method: PaymentMethodChoice }
   | { kind: "approved"; checkout: CheckoutResponse | null }
   | { kind: "payment_failed"; status: PaymentStatus; checkout: CheckoutResponse | null }
   | { kind: "error"; message: string };
@@ -62,33 +79,45 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
   // fire for a single real page load.
   const hasInitializedRef = useRef(false);
 
-  async function startCheckout(planCode: string, isRetryAfterConflict = false) {
-    setPhase({ kind: "creating" });
+  async function startCheckout(
+    planCode: string,
+    method: PaymentMethodChoice,
+    cardData?: CardCheckoutData,
+    isRetryAfterConflict = false
+  ) {
+    setPhase({ kind: "creating", method });
 
     try {
-      const result = await createOrResumeCheckout(draftId, planCode);
-      applyCheckoutResult(result);
+      const result = await createOrResumeCheckout(draftId, planCode, method, cardData);
+      applyCheckoutResult(result, method);
     } catch (error) {
       const conflictPlanCode = !isRetryAfterConflict ? getActiveConflictPlanCode(error) : null;
 
       if (conflictPlanCode) {
         // A different plan_code already has an active checkout for this
         // draft. Recoverable: resume that one instead of failing outright.
-        await startCheckout(conflictPlanCode, true);
+        await startCheckout(conflictPlanCode, method, cardData, true);
         return;
       }
 
+      // Card tokens are single-use: on failure the user must go back through
+      // the Brick for a fresh token rather than the page silently retrying
+      // with the same (now-dead) token, so this always surfaces as an error
+      // (never a silent retry) for both methods, same as before this change.
       setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
     }
   }
 
-  function applyCheckoutResult(result: CheckoutResponse) {
+  function applyCheckoutResult(result: CheckoutResponse, method: PaymentMethodChoice) {
+    // The HTTP call succeeding is never treated as "paid" by itself — only
+    // result.status (ultimately sourced from the Mercado Pago Order/webhook
+    // confirmation) decides which phase this becomes.
     if (result.status === "approved") {
       setPhase({ kind: "approved", checkout: result });
     } else if (FAILED_PAYMENT_STATUSES.includes(result.status)) {
       setPhase({ kind: "payment_failed", status: result.status, checkout: result });
     } else {
-      setPhase({ kind: "awaiting_payment", checkout: result });
+      setPhase({ kind: "awaiting_payment", checkout: result, method });
     }
   }
 
@@ -99,7 +128,9 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
       const data = await fetchDraftPaymentStatus(draftId);
 
       if (!data.payment) {
-        await startCheckout(DEFAULT_PLAN_CODE);
+        // Nothing started yet: let the user choose Pix or Cartão instead of
+        // silently generating a Pix order, as the flow used to do.
+        setPhase({ kind: "selecting_method" });
         return;
       }
 
@@ -113,9 +144,20 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
         return;
       }
 
-      // Active payment: resume it (fetches the QR/Pix artifacts, which this
-      // status endpoint never returns) using the plan already in use.
-      await startCheckout(data.payment.plan.code);
+      // Active payment: resume it (fetches the QR/Pix or card-status
+      // artifacts, which this status endpoint never returns) using the plan
+      // already in use. Always resumed as "pix" here: when the Order was
+      // already created (the overwhelmingly common case — Pix and card
+      // Orders both get created synchronously during the original request),
+      // start_checkout's mp_order_id short-circuit returns the existing
+      // Payment as-is and this method argument is never actually used by the
+      // backend. It only matters for the rare case of a previous attempt
+      // that failed before the Order was ever created — a card attempt in
+      // that exact narrow window can't be resumed automatically anyway
+      // (its token was single-use and is already gone), so defaulting to
+      // "pix" here carries forward the same limitation the checkout already
+      // had before card payments existed (this endpoint's only method).
+      await startCheckout(data.payment.plan.code, "pix");
     } catch (error) {
       setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
     }
@@ -194,9 +236,21 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
 
         <div className="mt-6">
           {phase.kind === "loading" && <LoadingBlock message="Carregando pagamento..." />}
-          {phase.kind === "creating" && <LoadingBlock message="Gerando seu Pix..." />}
 
-          {phase.kind === "awaiting_payment" && (
+          {phase.kind === "selecting_method" && (
+            <MethodSelectionBlock
+              onChoosePix={() => void startCheckout(DEFAULT_PLAN_CODE, "pix")}
+              onSubmitCard={(cardData) => startCheckout(DEFAULT_PLAN_CODE, "card", cardData)}
+            />
+          )}
+
+          {phase.kind === "creating" && (
+            <LoadingBlock
+              message={phase.method === "card" ? "Processando pagamento..." : "Gerando seu Pix..."}
+            />
+          )}
+
+          {phase.kind === "awaiting_payment" && phase.method === "pix" && (
             <AwaitingPaymentBlock
               checkout={phase.checkout}
               copyFeedback={copyFeedback}
@@ -204,12 +258,16 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
             />
           )}
 
+          {phase.kind === "awaiting_payment" && phase.method === "card" && (
+            <CardProcessingBlock status={phase.checkout.status} />
+          )}
+
           {phase.kind === "approved" && <ApprovedBlock draftId={draftId} />}
 
           {phase.kind === "payment_failed" && (
             <FailedBlock
               status={phase.status}
-              onRetry={() => void startCheckout(DEFAULT_PLAN_CODE)}
+              onRetry={() => setPhase({ kind: "selecting_method" })}
             />
           )}
 
@@ -239,6 +297,70 @@ function PlanSummaryBlock({ checkout }: { checkout: CheckoutResponse | null }) {
       {/* The backend never returns a price for this endpoint today (only
           plan code/name) — showing a number here would mean inventing data
           not backed by any API response, so it is intentionally omitted. */}
+    </div>
+  );
+}
+
+function MethodSelectionBlock({
+  onChoosePix,
+  onSubmitCard,
+}: {
+  onChoosePix: () => void;
+  onSubmitCard: (cardData: CardCheckoutData) => Promise<void>;
+}) {
+  const [tab, setTab] = useState<PaymentMethodChoice>("pix");
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex gap-2 rounded-full border border-white/10 bg-white/5 p-1">
+        <button
+          type="button"
+          onClick={() => setTab("pix")}
+          className={`flex-1 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+            tab === "pix" ? "bg-yellow-400 text-black" : "text-slate-300 hover:bg-white/10"
+          }`}
+        >
+          Pix
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("card")}
+          className={`flex-1 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+            tab === "card" ? "bg-yellow-400 text-black" : "text-slate-300 hover:bg-white/10"
+          }`}
+        >
+          Cartão
+        </button>
+      </div>
+
+      {tab === "pix" && (
+        <div className="flex flex-col items-center gap-4 rounded-3xl border border-white/10 bg-white/5 p-8 text-center backdrop-blur-xl">
+          <p className="text-slate-300">Pague com Pix e receba a confirmação em instantes.</p>
+          <button
+            type="button"
+            onClick={onChoosePix}
+            className="w-full rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-[1.02] active:scale-95"
+          >
+            Gerar Pix
+          </button>
+        </div>
+      )}
+
+      {tab === "card" && (
+        <CardPaymentBlock amount={DEFAULT_PLAN_DISPLAY_AMOUNT} onSubmit={onSubmitCard} />
+      )}
+    </div>
+  );
+}
+
+function CardProcessingBlock({ status }: { status: PaymentStatus }) {
+  return (
+    <div className="flex flex-col items-center gap-4 rounded-3xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur-xl">
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-yellow-400/30 border-t-yellow-400" />
+      <p className="text-slate-300">{statusLabel(status)}</p>
+      <p className="text-sm text-slate-400">
+        Assim que o pagamento for confirmado, esta página atualiza automaticamente.
+      </p>
     </div>
   );
 }
@@ -468,7 +590,7 @@ function FailedBlock({ status, onRetry }: { status: PaymentStatus; onRetry: () =
     <div className="flex flex-col items-center gap-4 rounded-3xl border border-red-400/30 bg-red-400/10 p-10 text-center backdrop-blur-xl">
       <span className="text-5xl">✕</span>
       <h2 className="text-2xl font-bold text-white">{statusLabel(status)}</h2>
-      <p className="text-slate-300">Você pode tentar novamente para gerar um novo Pix.</p>
+      <p className="text-slate-300">Você pode tentar novamente com Pix ou cartão.</p>
       <button
         type="button"
         onClick={onRetry}

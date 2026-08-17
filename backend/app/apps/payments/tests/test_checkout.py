@@ -603,6 +603,247 @@ class CheckoutDraftStatusTests(TestCase):
         self.assertNotEqual(draft.status, ExperienceDraft.Status.PUBLISHED)
 
 
+SAMPLE_CARD_ORDER_RAW = {
+    "id": "ORD01CARD",
+    "status": "processed",
+    "status_detail": "accredited",
+    "transactions": {
+        "payments": [
+            {
+                "id": "PAY01CARD",
+                "status": "processed",
+                "status_detail": "accredited",
+                "payment_method": {"id": "master", "type": "credit_card"},
+            }
+        ]
+    },
+}
+
+
+def make_card_mp_result(**overrides):
+    defaults = dict(
+        order_id="ORD01CARD",
+        status="processed",
+        status_detail="accredited",
+        payment_id="PAY01CARD",
+        raw=SAMPLE_CARD_ORDER_RAW,
+    )
+    defaults.update(overrides)
+    return MercadoPagoOrderResult(**defaults)
+
+
+def patch_mp_client_for_card(**create_order_kwargs):
+    """Same as patch_mp_client, but the fake create_order returns a card-style
+    Order response (payment_method.type=credit_card) instead of Pix."""
+
+    mock_cls = MagicMock()
+    mock_cls.return_value.create_order.return_value = make_card_mp_result(**create_order_kwargs)
+    return patch("apps.payments.services.checkout_service.MercadoPagoClient", mock_cls)
+
+
+def card_payload(**overrides):
+    payload = {
+        "plan_code": "essential",
+        "payment_method": "card",
+        "token": "card-token-123",
+        "payment_method_id": "master",
+        "installments": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+class CheckoutCardValidationTests(TestCase):
+    """Itens B, C, D, G do checklist: validação de entrada do cartão."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.client = auth_client(self.user)
+
+    def test_pix_still_works_without_payment_method_field(self):
+        # Item A: nenhum campo novo é obrigatório para o fluxo Pix existente.
+        with patch_mp_client():
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertEqual(payment.last_sync_payload["transactions"]["payments"][0]["payment_method"]["id"], "pix")
+
+    def test_card_without_token_returns_400(self):
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), card_payload(token=""))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("token", response.data)
+        self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
+
+    def test_card_missing_token_field_entirely_returns_400(self):
+        payload = card_payload()
+        del payload["token"]
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("token", response.data)
+
+    def test_card_without_payment_method_id_returns_400(self):
+        payload = card_payload()
+        del payload["payment_method_id"]
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("payment_method_id", response.data)
+        self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
+
+    def test_card_without_installments_returns_400(self):
+        payload = card_payload()
+        del payload["installments"]
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), payload)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("installments", response.data)
+
+    def test_card_with_zero_installments_returns_400(self):
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), card_payload(installments=0))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("installments", response.data)
+
+    def test_card_with_negative_installments_returns_400(self):
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), card_payload(installments=-1))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_card_with_non_integer_installments_returns_400(self):
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), card_payload(installments="not-a-number"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class CheckoutCardPayloadTests(TestCase):
+    """Item E: o payload enviado à Orders API para cartão é montado
+    exatamente como confirmado na documentação oficial (id/type/token/
+    installments) — e item G: issuer_id nunca é encaminhado, mesmo se o
+    frontend enviar."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.client = auth_client(self.user)
+
+    def test_card_payload_sent_to_mercadopago_matches_documented_shape(self):
+        with patch_mp_client_for_card() as mock_cls:
+            self.client.post(
+                checkout_url(self.draft.id),
+                card_payload(payment_method_id="visa", installments=3),
+            )
+        payment = Payment.objects.get(draft=self.draft)
+        call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
+        self.assertEqual(
+            call_kwargs["payments"],
+            [
+                {
+                    "amount": f"{payment.amount:.2f}",
+                    "payment_method": {
+                        "id": "visa",
+                        "type": "credit_card",
+                        "token": "card-token-123",
+                        "installments": 3,
+                    },
+                }
+            ],
+        )
+
+    def test_issuer_id_sent_by_client_never_reaches_orders_api(self):
+        with patch_mp_client_for_card() as mock_cls:
+            self.client.post(checkout_url(self.draft.id), card_payload(issuer_id="24"))
+        call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
+        payment_method = call_kwargs["payments"][0]["payment_method"]
+        self.assertNotIn("issuer_id", payment_method)
+
+    def test_transaction_amount_sent_by_client_is_ignored_price_comes_from_plan(self):
+        # Item F: mesmo que o frontend mande transaction_amount (só para o
+        # Brick), o backend continua sendo a única autoridade sobre o preço —
+        # esse campo nem é declarado no serializer, então é descartado.
+        with patch_mp_client_for_card() as mock_cls:
+            self.client.post(
+                checkout_url(self.draft.id),
+                card_payload(plan_code="stellar", transaction_amount="0.01"),
+            )
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertEqual(payment.amount, Decimal("39.99"))
+        call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
+        self.assertEqual(call_kwargs["payments"][0]["amount"], "39.99")
+
+    def test_card_number_or_cvv_like_fields_are_never_accepted(self):
+        # O serializer não declara esses campos — mesmo se enviados, o DRF
+        # os descarta silenciosamente, e nada no fluxo os lê.
+        with patch_mp_client_for_card() as mock_cls:
+            self.client.post(
+                checkout_url(self.draft.id),
+                card_payload(card_number="4509953566233704", cvv="123", expiration_date="11/30"),
+            )
+        call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
+        payment_method = call_kwargs["payments"][0]["payment_method"]
+        self.assertEqual(set(payment_method.keys()), {"id", "type", "token", "installments"})
+
+
+class CheckoutCardConfirmationFlowTests(TestCase):
+    """Itens H e I: o resultado do cartão passa pelo mesmo mapeamento de
+    status e pelas mesmas regras de draft.status que o Pix já usa — nenhuma
+    lógica nova específica de cartão nessas camadas."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.client = auth_client(self.user)
+
+    def test_approved_card_payment_updates_payment_status_via_existing_mapping(self):
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertEqual(payment.status, Payment.Status.APPROVED)
+        self.assertEqual(payment.mp_order_id, "ORD01CARD")
+        self.assertEqual(payment.mp_payment_id, "PAY01CARD")
+
+    def test_rejected_card_payment_does_not_mark_draft_paid_or_published(self):
+        with patch_mp_client_for_card(status="failed", status_detail="cc_rejected_other_reason"):
+            response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertEqual(payment.status, Payment.Status.REJECTED)
+        self.draft.refresh_from_db()
+        self.assertNotEqual(self.draft.status, ExperienceDraft.Status.PAID)
+        self.assertNotEqual(self.draft.status, ExperienceDraft.Status.PUBLISHED)
+
+    def test_card_gateway_failure_returns_502_and_does_not_create_order(self):
+        with patch_mp_client(raise_error=True):
+            response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        payment = Payment.objects.get(draft=self.draft)
+        self.assertIsNone(payment.mp_order_id)
+
+
+class CheckoutResponsePaymentMethodTypeTests(TestCase):
+    """A view expõe payment_method_type (derivado do last_sync_payload já
+    existente) para o frontend distinguir Pix de cartão ao retomar um
+    checkout — sem precisar de nenhuma coluna nova em Payment."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.client = auth_client(self.user)
+
+    def test_pix_response_reports_bank_transfer_type(self):
+        with patch_mp_client():
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+        self.assertEqual(response.data["checkout"]["payment_method_type"], "bank_transfer")
+
+    def test_card_response_reports_credit_card_type(self):
+        with patch_mp_client_for_card():
+            response = self.client.post(checkout_url(self.draft.id), card_payload())
+        self.assertEqual(response.data["checkout"]["payment_method_type"], "credit_card")
+
+
 class CheckoutFailureHandlingTests(TestCase):
     def test_mp_failure_returns_gateway_error_and_does_not_publish_or_mark_draft_paid(self):
         user = make_user()
