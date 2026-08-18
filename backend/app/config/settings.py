@@ -229,6 +229,15 @@ R2_PRESIGNED_URL_TTL_SECONDS = config(
     "R2_PRESIGNED_URL_TTL_SECONDS", default=900, cast=int
 )
 
+# Por quanto tempo uma Media fica em upload_status=PENDING antes de ser
+# considerada abandonada (upload nunca confirmado via .../complete/) e
+# limpa (objeto R2 + registro) na próxima vez que a quota de mídia do
+# draft precisar ser calculada. Ponto único de verdade — nunca hardcode
+# esse número em mais de um lugar (ver apps.experiences.services.media_cleanup).
+PENDING_MEDIA_EXPIRATION_MINUTES = config(
+    "PENDING_MEDIA_EXPIRATION_MINUTES", default=60, cast=int
+)
+
 
 # Mercado Pago
 # Keep these values out of source control.  The application continues to boot

@@ -55,3 +55,22 @@ def generate_presigned_read_url(storage_key: str, *, expires_in: int | None = No
         },
         ExpiresIn=expires_in if expires_in is not None else settings.R2_PRESIGNED_URL_TTL_SECONDS,
     )
+
+
+def delete_object(storage_key: str) -> None:
+    """Remove um objeto do bucket R2.
+
+    Idempotente pela própria semântica do protocolo S3: um DeleteObject
+    sobre uma chave que já não existe também retorna sucesso (204), nunca
+    um erro de "not found" — não há necessidade de checar existência antes
+    de chamar isto.
+
+    Infraestrutura pura, como generate_presigned_read_url: não sabe o que é
+    Media/ExperienceDraft, não decide autorização. Pode levantar
+    ImproperlyConfigured (R2 não configurado) ou ClientError (falha real de
+    rede/credencial) — quem chama decide se isso deve ou não impedir a
+    remoção do registro correspondente no banco (ver views.MediaDeleteView
+    e services.media_cleanup: em ambos, best-effort — nunca bloqueia).
+    """
+
+    get_r2_client().delete_object(Bucket=settings.R2_BUCKET_NAME, Key=storage_key)

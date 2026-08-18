@@ -1,11 +1,12 @@
 import uuid
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -15,6 +16,7 @@ from apps.payments.models import Payment, Plan
 
 from . import storage
 from .models import ExperienceDraft, Media
+from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
 
 User = get_user_model()
@@ -83,8 +85,20 @@ def upload_complete_url(draft_id, media_id):
     return f"/api/experiences/drafts/{draft_id}/media/{media_id}/complete/"
 
 
+def media_delete_url(draft_id, media_id):
+    return f"/api/experiences/drafts/{draft_id}/media/{media_id}/"
+
+
 def public_url(slug):
     return f"/api/public/experiences/{slug}/"
+
+
+def expire_media(media, *, minutes_ago):
+    # Media.created_at usa auto_now_add — só dá para "envelhecer" um
+    # registro existente via update() na queryset, nunca atribuindo
+    # created_at diretamente na instância antes de save().
+    Media.objects.filter(id=media.id).update(created_at=timezone.now() - timedelta(minutes=minutes_ago))
+    media.refresh_from_db()
 
 
 class PublishOwnershipTests(TestCase):
@@ -403,9 +417,11 @@ class PresignedReadUrlTests(TestCase):
 
 
 class MediaUploadIntentRegressionTests(TestCase):
-    """Cobertura do fluxo de upload EXISTENTE (upload-intents) — nenhuma
-    linha desta view foi alterada nesta tarefa; estes testes só documentam o
-    comportamento atual para provar ausência de regressão."""
+    """Cobertura do fluxo de upload EXISTENTE (upload-intents). A view agora
+    também chama cleanup_abandoned_media(draft) antes de contar a quota (ver
+    MediaUploadIntentCleanupTests) — nenhum destes testes cria mídia
+    PENDING expirada, então a chamada é sempre um no-op aqui, e o
+    comportamento documentado nesta classe permanece válido."""
 
     def setUp(self):
         self.owner = make_user("owner@example.com")
@@ -729,3 +745,273 @@ class PublicExperienceViewTests(TestCase):
                 "music", "media", "published_at",
             },
         )
+
+
+class DeleteObjectTests(TestCase):
+    """storage.delete_object é infraestrutura pura, mesmo contrato de
+    generate_presigned_read_url — nenhuma dessas chamadas alcança a rede."""
+
+    def test_calls_delete_object_with_configured_bucket_and_exact_key(self):
+        with patch("apps.experiences.storage.get_r2_client") as mock_get_client, \
+             patch("apps.experiences.storage.settings.R2_BUCKET_NAME", "test-bucket"):
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+
+            storage.delete_object("drafts/abc/photos/1-a.jpg")
+
+            mock_client.delete_object.assert_called_once_with(
+                Bucket="test-bucket", Key="drafts/abc/photos/1-a.jpg"
+            )
+
+    def test_raises_when_r2_is_not_configured(self):
+        with patch(
+            "apps.experiences.storage.get_r2_client",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            with self.assertRaises(ImproperlyConfigured):
+                storage.delete_object("some-key")
+
+    def test_propagates_client_error(self):
+        with patch("apps.experiences.storage.get_r2_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.delete_object.side_effect = ClientError(
+                {"Error": {"Code": "500", "Message": "Internal Error"}}, "DeleteObject"
+            )
+            mock_get_client.return_value = mock_client
+
+            with self.assertRaises(ClientError):
+                storage.delete_object("some-key")
+
+
+class MediaDeleteViewTests(TestCase):
+    """DELETE /api/experiences/drafts/<id>/media/<id>/ — ver
+    views.MediaDeleteView e storage.delete_object."""
+
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+        self.other_user = make_user("other@example.com")
+        self.draft = make_draft(self.owner)
+        self.media = make_media(self.draft)
+
+    def _patch_r2(self, delete_object_side_effect=None):
+        mock_client = MagicMock()
+        if delete_object_side_effect is not None:
+            mock_client.delete_object.side_effect = delete_object_side_effect
+        return patch("apps.experiences.storage.get_r2_client", return_value=mock_client)
+
+    def test_owner_deletes_own_media(self):
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(media_delete_url(self.draft.id, self.media.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Media.objects.filter(id=self.media.id).exists())
+
+    def test_deletion_calls_r2_delete_object_with_exact_storage_key(self):
+        with patch("apps.experiences.views.delete_object") as mock_delete_object:
+            auth_client(self.owner).delete(media_delete_url(self.draft.id, self.media.id))
+            mock_delete_object.assert_called_once_with(self.media.storage_key)
+
+    def test_other_user_cannot_delete_someone_elses_media(self):
+        with self._patch_r2():
+            response = auth_client(self.other_user).delete(media_delete_url(self.draft.id, self.media.id))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Media.objects.filter(id=self.media.id).exists())
+
+    def test_anonymous_user_cannot_delete(self):
+        response = APIClient().delete(media_delete_url(self.draft.id, self.media.id))
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.assertTrue(Media.objects.filter(id=self.media.id).exists())
+
+    def test_nonexistent_media_id_returns_404(self):
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(media_delete_url(self.draft.id, uuid.uuid4()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_media_belonging_to_a_different_draft_returns_404(self):
+        # media_id existe, mas não pertence ao draft_id da URL — mesmo
+        # padrão de "nunca revelar existência" usado no resto do app.
+        other_draft = make_draft(self.owner)
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(media_delete_url(other_draft.id, self.media.id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Media.objects.filter(id=self.media.id).exists())
+
+    def test_r2_client_error_does_not_block_record_deletion(self):
+        error = ClientError({"Error": {"Code": "500", "Message": "Internal Error"}}, "DeleteObject")
+        with self._patch_r2(delete_object_side_effect=error):
+            response = auth_client(self.owner).delete(media_delete_url(self.draft.id, self.media.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Media.objects.filter(id=self.media.id).exists())
+
+    def test_r2_not_configured_does_not_block_record_deletion(self):
+        with patch(
+            "apps.experiences.storage.get_r2_client",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            response = auth_client(self.owner).delete(media_delete_url(self.draft.id, self.media.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Media.objects.filter(id=self.media.id).exists())
+
+    def test_can_delete_media_in_any_upload_status(self):
+        for upload_status in (Media.UploadStatus.PENDING, Media.UploadStatus.UPLOADED, Media.UploadStatus.FAILED):
+            media = make_media(self.draft, upload_status=upload_status)
+            with self._patch_r2():
+                response = auth_client(self.owner).delete(media_delete_url(self.draft.id, media.id))
+            self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+            self.assertFalse(Media.objects.filter(id=media.id).exists())
+
+
+class MediaCleanupServiceTests(TestCase):
+    """services.media_cleanup.cleanup_abandoned_media — ver docstring do
+    módulo para a motivação (uploads nunca confirmados não podem prender a
+    quota de mídia de um draft indefinidamente)."""
+
+    def setUp(self):
+        self.owner = make_user()
+        self.draft = make_draft(self.owner)
+
+    def _patch_r2(self, delete_object_side_effect=None):
+        mock_client = MagicMock()
+        if delete_object_side_effect is not None:
+            mock_client.delete_object.side_effect = delete_object_side_effect
+        return patch("apps.experiences.storage.get_r2_client", return_value=mock_client)
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_pending_media_older_than_expiration_is_removed(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(media, minutes_ago=61)
+
+        with self._patch_r2():
+            cleanup_abandoned_media(self.draft)
+
+        self.assertFalse(Media.objects.filter(id=media.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_pending_media_within_expiration_window_is_kept(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(media, minutes_ago=59)
+
+        with self._patch_r2():
+            cleanup_abandoned_media(self.draft)
+
+        self.assertTrue(Media.objects.filter(id=media.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_uploaded_media_is_never_touched_regardless_of_age(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
+        expire_media(media, minutes_ago=999)
+
+        with self._patch_r2():
+            cleanup_abandoned_media(self.draft)
+
+        self.assertTrue(Media.objects.filter(id=media.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_failed_media_is_never_touched_regardless_of_age(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.FAILED)
+        expire_media(media, minutes_ago=999)
+
+        with self._patch_r2():
+            cleanup_abandoned_media(self.draft)
+
+        self.assertTrue(Media.objects.filter(id=media.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_r2_failure_does_not_block_removal_of_the_record(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(media, minutes_ago=61)
+        error = ClientError({"Error": {"Code": "500", "Message": "Internal Error"}}, "DeleteObject")
+
+        with self._patch_r2(delete_object_side_effect=error):
+            cleanup_abandoned_media(self.draft)
+
+        self.assertFalse(Media.objects.filter(id=media.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_r2_not_configured_does_not_block_removal_of_the_record(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(media, minutes_ago=61)
+
+        with patch(
+            "apps.experiences.storage.get_r2_client",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            cleanup_abandoned_media(self.draft)
+
+        self.assertFalse(Media.objects.filter(id=media.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_only_touches_media_of_the_given_draft(self):
+        other_draft = make_draft(self.owner)
+        own_expired = make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(own_expired, minutes_ago=61)
+        other_expired = make_media(other_draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(other_expired, minutes_ago=61)
+
+        with self._patch_r2():
+            cleanup_abandoned_media(self.draft)
+
+        self.assertFalse(Media.objects.filter(id=own_expired.id).exists())
+        self.assertTrue(Media.objects.filter(id=other_expired.id).exists())
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_deletion_calls_r2_delete_object_with_exact_storage_key(self):
+        media = make_media(self.draft, upload_status=Media.UploadStatus.PENDING)
+        expire_media(media, minutes_ago=61)
+
+        with patch("apps.experiences.services.media_cleanup.delete_object") as mock_delete_object:
+            cleanup_abandoned_media(self.draft)
+
+        mock_delete_object.assert_called_once_with(media.storage_key)
+
+
+class MediaUploadIntentCleanupTests(TestCase):
+    """MediaUploadIntentView chama cleanup_abandoned_media(draft) antes de
+    contar a quota — mídias PENDING abandonadas nunca devem prender a
+    quota de um draft indefinidamente."""
+
+    def setUp(self):
+        self.owner = make_user()
+        self.draft = make_draft(self.owner)
+
+    def _patch_r2(self, upload_url="https://r2.example/upload-signed"):
+        mock_client = MagicMock()
+        mock_client.generate_presigned_url.return_value = upload_url
+        return patch("apps.experiences.views.get_r2_client", return_value=mock_client)
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_expired_pending_media_is_cleaned_up_and_frees_quota(self):
+        # 10 fotos PENDING expiradas ocupam o limite de 10 — sem a limpeza,
+        # a próxima tentativa de upload seria recusada por engano.
+        for _ in range(10):
+            media = make_media(self.draft, media_type=Media.Type.PHOTO, upload_status=Media.UploadStatus.PENDING)
+            expire_media(media, minutes_ago=61)
+
+        with self._patch_r2():
+            response = auth_client(self.owner).post(
+                upload_intent_url(self.draft.id),
+                {"media_type": "photo", "filename": "foto.jpg", "mime_type": "image/jpeg", "size_bytes": 1000},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Media.objects.filter(draft=self.draft, upload_status=Media.UploadStatus.PENDING).count(), 1)
+
+    @override_settings(PENDING_MEDIA_EXPIRATION_MINUTES=60)
+    def test_recent_pending_media_still_counts_toward_quota(self):
+        # Sem expiração (criada agora, dentro da janela), a pending continua
+        # valendo como mídia ativa — a limpeza não é retroativamente
+        # agressiva, só remove o que já passou do prazo.
+        for _ in range(10):
+            make_media(self.draft, media_type=Media.Type.PHOTO, upload_status=Media.UploadStatus.PENDING)
+
+        with self._patch_r2():
+            response = auth_client(self.owner).post(
+                upload_intent_url(self.draft.id),
+                {"media_type": "photo", "filename": "foto.jpg", "mime_type": "image/jpeg", "size_bytes": 1000},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Media.objects.filter(draft=self.draft).count(), 10)

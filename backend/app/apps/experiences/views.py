@@ -20,8 +20,9 @@ from .serializers import (
     PublishResponseSerializer,
     UploadIntentSerializer,
 )
+from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
-from .storage import generate_presigned_read_url, get_r2_client
+from .storage import delete_object, generate_presigned_read_url, get_r2_client
 
 
 def get_owned_draft_or_404(request, draft_id):
@@ -160,6 +161,10 @@ class MediaUploadIntentView(APIView):
         data = serializer.validated_data
         media_type = data["media_type"]
         limits = {Media.Type.PHOTO: 10, Media.Type.VIDEO: 3}
+        # Antes de contar a quota: descarta pendências abandonadas (upload
+        # nunca confirmado via .../complete/) para que elas nunca prendam a
+        # quota do usuário indefinidamente — ver services.media_cleanup.
+        cleanup_abandoned_media(draft)
         active_media = draft.media.exclude(upload_status=Media.UploadStatus.FAILED)
         if active_media.filter(media_type=media_type).count() >= limits[media_type]:
             return Response({"detail": "Limite de mídias atingido."}, status=status.HTTP_400_BAD_REQUEST)
@@ -223,3 +228,30 @@ class MediaUploadCompleteView(APIView):
         media.uploaded_at = timezone.now()
         media.save(update_fields=["upload_status", "uploaded_at"])
         return Response({"id": str(media.id), "upload_status": media.upload_status})
+
+
+class MediaDeleteView(APIView):
+    """DELETE /api/experiences/drafts/<uuid:draft_id>/media/<uuid:media_id>/
+
+    Remove uma mídia (em qualquer upload_status) do draft do usuário.
+
+    Best-effort quanto ao R2 (ver storage.delete_object): uma falha ao
+    remover o objeto do bucket nunca impede a remoção do registro — o
+    usuário pediu para a mídia sumir da experiência, e é isso que o
+    registro no banco representa. Um objeto órfão no R2, se isso acontecer,
+    nunca é servido a ninguém: generate_presigned_read_url só é chamado
+    para mídia com upload_status=UPLOADED referenciada por um draft
+    PUBLISHED.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, draft_id, media_id):
+        draft = get_owned_draft_or_404(request, draft_id)
+        media = get_object_or_404(Media, id=media_id, draft=draft)
+        try:
+            delete_object(media.storage_key)
+        except (ImproperlyConfigured, ClientError):
+            pass
+        media.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
