@@ -8,7 +8,12 @@ from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment
 from ..serializers.checkout import CheckoutRequestSerializer, CheckoutResponseSerializer
-from ..services.checkout_service import ActiveCheckoutConflict, CheckoutGatewayError, CheckoutService
+from ..services.checkout_service import (
+    ActiveCheckoutConflict,
+    CheckoutGatewayError,
+    CheckoutService,
+    DraftAlreadyPaid,
+)
 
 
 def _checkout_payload_for(payment: Payment) -> dict:
@@ -66,6 +71,11 @@ class DraftCheckoutView(APIView):
                     "detail": "Já existe um checkout ativo para este draft com outro plano.",
                     "active_plan_code": exc.payment.plan.code,
                 },
+                status=status.HTTP_409_CONFLICT,
+            )
+        except DraftAlreadyPaid:
+            return Response(
+                {"detail": "Este draft já foi pago e não pode iniciar um novo checkout."},
                 status=status.HTTP_409_CONFLICT,
             )
         except CheckoutGatewayError:

@@ -82,6 +82,25 @@ class CheckoutGatewayError(CheckoutError):
         super().__init__(f"Falha ao criar a Order na Mercado Pago para o Payment {payment.id}.")
 
 
+class DraftAlreadyPaid(CheckoutError):
+    """O draft já foi pago (ou publicado) — nenhuma nova tentativa de
+    checkout é permitida, mesmo que o Payment aprovado seja um estado
+    terminal e por isso não colida com uniq_active_payment_per_draft (essa
+    constraint só cobre pending/in_process/action_required).
+
+    Checar Draft.status (e não Payment.status == APPROVED diretamente) cobre
+    os dois casos pedidos ("Payment approved" e "Draft PAID") com uma única
+    verificação: PaymentConfirmationService._mark_draft_paid é o único lugar
+    que leva um Payment a APPROVED, e sempre marca o Draft como PAID (ou o
+    encontra já PUBLISHED) no mesmo passo — esse invariante nunca diverge."""
+
+    def __init__(self, draft: ExperienceDraft):
+        self.draft = draft
+        super().__init__(
+            f"O draft {draft.id} já está com status '{draft.status}' — não é permitido iniciar um novo checkout."
+        )
+
+
 class CheckoutService:
     """Ponto único de orquestração do checkout de um ExperienceDraft."""
 
@@ -138,8 +157,19 @@ class CheckoutService:
             with transaction.atomic():
                 # select_for_update serializa tentativas concorrentes de checkout
                 # para o MESMO draft (efetivo em Postgres; no-op seguro em SQLite,
-                # onde a UniqueConstraint abaixo assume a defesa final).
-                ExperienceDraft.objects.select_for_update().filter(pk=draft.pk).first()
+                # onde a UniqueConstraint abaixo assume a defesa final). Também
+                # serializa a checagem de "já pago" logo abaixo: duas requisições
+                # simultâneas num draft já PAID nunca correm essa checagem em
+                # paralelo — a segunda só lê o status depois que a primeira já
+                # liberou o lock (commit/rollback), nunca antes.
+                locked_draft = ExperienceDraft.objects.select_for_update().get(pk=draft.pk)
+
+                if locked_draft.status in (ExperienceDraft.Status.PAID, ExperienceDraft.Status.PUBLISHED):
+                    # Levanta ANTES de qualquer leitura/escrita de Payment e antes
+                    # de qualquer construção de MercadoPagoClient (isso acontece
+                    # depois, em start_checkout) — garante que nenhuma chamada de
+                    # rede à Mercado Pago é feita para um draft já pago.
+                    raise DraftAlreadyPaid(locked_draft)
 
                 active_payment = (
                     Payment.objects.select_for_update()

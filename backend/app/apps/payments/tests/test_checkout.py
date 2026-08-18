@@ -13,7 +13,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment, Plan
-from ..services.checkout_service import CheckoutService, _payer_email_for
+from ..services.checkout_service import CheckoutService, DraftAlreadyPaid, _payer_email_for
 from ..services.mercadopago_client import (
     MercadoPagoConfigurationError,
     MercadoPagoGatewayError,
@@ -1005,3 +1005,175 @@ class CheckoutFailureHandlingTests(TestCase):
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
         self.assertEqual(call_kwargs["idempotency_key"], failed_payment.idempotency_key)
         self.assertEqual(call_kwargs["external_reference"], failed_payment.external_reference)
+
+
+class CheckoutAlreadyPaidTests(TestCase):
+    """Um draft já pago (ou publicado) nunca pode iniciar um novo checkout,
+    mesmo que o Payment aprovado seja um estado terminal e por isso não
+    colida com uniq_active_payment_per_draft. Ver DraftAlreadyPaid em
+    checkout_service.py."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.draft = make_draft(self.user)
+        self.plan = Plan.objects.get(code="essential")
+        self.client = auth_client(self.user)
+
+    def test_new_draft_allows_checkout(self):
+        # Caso base: nada muda para um draft que nunca foi pago.
+        with patch_mp_client():
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
+
+    def test_draft_with_pending_payment_still_reuses_it(self):
+        # Comportamento existente preservado: pending é um estado ativo, não
+        # "já pago" — a reutilização continua funcionando exatamente como
+        # antes desta correção.
+        existing = make_payment(
+            draft=self.draft, plan=self.plan, attempt_number=1,
+            status=Payment.Status.PENDING, mp_order_id="ORD-PENDING",
+        )
+        with patch_mp_client():
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["payment_id"], str(existing.id))
+        self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
+
+    def test_draft_with_action_required_payment_still_reuses_it(self):
+        existing = make_payment(
+            draft=self.draft, plan=self.plan, attempt_number=1,
+            status=Payment.Status.ACTION_REQUIRED, mp_order_id="ORD-ACTION-REQUIRED",
+        )
+        with patch_mp_client():
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["payment_id"], str(existing.id))
+        self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
+
+    def test_draft_with_approved_payment_rejects_new_checkout(self):
+        make_payment(
+            draft=self.draft, plan=self.plan, attempt_number=1,
+            status=Payment.Status.APPROVED, mp_order_id="ORD-APPROVED",
+        )
+        self.draft.status = ExperienceDraft.Status.PAID
+        self.draft.save(update_fields=["status"])
+
+        with patch_mp_client() as mock_cls:
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        # Nenhum segundo Payment foi criado, e a Mercado Pago nunca foi chamada.
+        self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
+        mock_cls.return_value.create_order.assert_not_called()
+
+    def test_paid_draft_rejects_new_checkout_even_without_a_payment_row(self):
+        # Checagem é sobre Draft.status, não sobre a existência de um Payment
+        # aprovado — cobre o invariante diretamente, sem depender de como o
+        # Draft chegou a PAID.
+        self.draft.status = ExperienceDraft.Status.PAID
+        self.draft.save(update_fields=["status"])
+
+        with patch_mp_client() as mock_cls:
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
+        mock_cls.return_value.create_order.assert_not_called()
+
+    def test_published_draft_rejects_new_checkout(self):
+        self.draft.status = ExperienceDraft.Status.PUBLISHED
+        self.draft.slug = "already-public"
+        self.draft.save(update_fields=["status", "slug"])
+
+        with patch_mp_client() as mock_cls:
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
+        mock_cls.return_value.create_order.assert_not_called()
+
+    def test_no_mercadopago_call_when_draft_already_paid(self):
+        # Item 9 explícito: a exceção é levantada antes de qualquer
+        # construção de MercadoPagoClient em start_checkout.
+        self.draft.status = ExperienceDraft.Status.PAID
+        self.draft.save(update_fields=["status"])
+
+        with patch_mp_client() as mock_cls:
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+
+        mock_cls.assert_not_called()
+
+    def test_other_user_still_gets_404_even_if_draft_is_already_paid(self):
+        # A checagem de ownership na view acontece antes de qualquer lógica
+        # de checkout — o status PAID do draft de B não muda o 404 para A.
+        other_user = make_user("other-paid-owner@example.com")
+        self.draft.status = ExperienceDraft.Status.PAID
+        self.draft.save(update_fields=["status"])
+
+        with patch_mp_client():
+            response = auth_client(other_user).post(checkout_url(self.draft.id), {"plan_code": "essential"})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
+
+    def test_service_level_raises_draft_already_paid_directly(self):
+        # Confirma o tipo de exceção exato na camada de serviço, não só o
+        # HTTP status mapeado pela view.
+        self.draft.status = ExperienceDraft.Status.PAID
+        self.draft.save(update_fields=["status"])
+
+        fake_client = MagicMock()
+        with self.assertRaises(DraftAlreadyPaid):
+            CheckoutService.start_checkout(draft=self.draft, plan=self.plan, mp_client=fake_client)
+        fake_client.create_order.assert_not_called()
+
+
+class CheckoutAlreadyPaidConcurrencyTests(TransactionTestCase):
+    """Duas requisições simultâneas contra um draft já pago: nenhuma delas
+    pode criar um novo Payment, e ambas devem ser recusadas — o lock via
+    select_for_update no Draft (mesmo usado para serializar a criação de
+    tentativas) também serializa esta checagem."""
+
+    reset_sequences = False
+    serialized_rollback = True
+
+    def test_concurrent_checkout_attempts_on_paid_draft_are_both_rejected(self):
+        user = make_user()
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="essential")
+        draft.status = ExperienceDraft.Status.PAID
+        draft.save(update_fields=["status"])
+
+        barrier = threading.Barrier(2)
+        errors = []
+        rejections = []
+
+        def worker():
+            try:
+                fake_client = MagicMock()
+                barrier.wait(timeout=5)
+                try:
+                    CheckoutService.start_checkout(draft=draft, plan=plan, mp_client=fake_client)
+                    errors.append(AssertionError("start_checkout deveria ter recusado o draft já pago"))
+                except DraftAlreadyPaid:
+                    rejections.append(True)
+                except OperationalError:
+                    # Mesma tolerância a contenção do SQLite de teste já usada
+                    # em CheckoutConcurrencyTests — o que importa é que nenhuma
+                    # das duas threads cria um Payment novo.
+                    rejections.append(True)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rejections), 2)
+        self.assertFalse(Payment.objects.filter(draft=draft).exists())
