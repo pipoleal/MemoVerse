@@ -6,7 +6,14 @@ export default function RegisterPage() {
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950">
       <Universe />
-      <div className="relative z-10"><LoginCard><RegisterForm /></LoginCard></div>
+      <div className="relative z-10">
+        <LoginCard
+          greeting="Crie sua conta."
+          subtitle="Comece a transformar suas memórias em experiências inesquecíveis."
+        >
+          <RegisterForm />
+        </LoginCard>
+      </div>
     </main>
   );
 }

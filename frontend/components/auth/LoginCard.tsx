@@ -2,10 +2,14 @@ import { ReactNode } from "react";
 
 type LoginCardProps = {
   children: ReactNode;
+  greeting?: string;
+  subtitle?: string;
 };
 
 export default function LoginCard({
   children,
+  greeting = "Bem-vindo de volta.",
+  subtitle = "Entre para acessar suas experiências.",
 }: LoginCardProps) {
   return (
     <div
@@ -27,11 +31,11 @@ export default function LoginCard({
         </h1>
 
         <p className="mt-3 text-gray-300">
-          Bem-vindo de volta.
+          {greeting}
         </p>
 
         <p className="mt-1 text-sm text-gray-400">
-          Entre para acessar suas experiências.
+          {subtitle}
         </p>
       </div>
 
