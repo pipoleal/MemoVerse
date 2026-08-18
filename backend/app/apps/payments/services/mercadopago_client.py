@@ -147,8 +147,16 @@ class MercadoPagoClient:
             result = self._sdk.order().create(order_payload, request_options)
             result.raise_for_status()
         except MercadoPagoSDKError as exc:
+            # Os valores também vão em `extra=` (para quem tiver um formatter que
+            # os renderize), mas são incorporados diretamente na string da mensagem
+            # porque o formatter padrão do Django/logging descarta `extra` que o
+            # format string não referencia.
             logger.warning(
-                "Mercado Pago rejeitou a criação da Order",
+                "Mercado Pago rejeitou a criação da Order "
+                "(status_code=%s, mp_error_code=%s, detail=%s)",
+                getattr(exc, "status_code", None),
+                getattr(exc, "error", None),
+                getattr(exc, "message", None),
                 extra=_sanitize_for_log(
                     status_code=getattr(exc, "status_code", None),
                     mp_error_code=getattr(exc, "error", None),
