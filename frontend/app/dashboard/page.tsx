@@ -1,32 +1,23 @@
-import ExperienceList from "@/components/dashboard/ExperienceList";
-import GalaxyHero from "@/components/dashboard/GalaxyHero";
-import Greeting from "@/components/dashboard/Greeting";
-import QuickActions from "@/components/dashboard/QuickActions";
-import Stats from "@/components/dashboard/Stats";
-import Universe from "@/components/universe/Universe";
+"use client";
+
+import DashboardHeader from "@/components/dashboard/DashboardHeader";
+import DashboardShell from "@/components/dashboard/DashboardShell";
+import ExperienceSection from "@/components/dashboard/ExperienceSection";
+import HeroActions from "@/components/dashboard/HeroActions";
+import JourneyStats from "@/components/dashboard/JourneyStats";
+import { useDashboardData } from "@/components/dashboard/useDashboardData";
 
 export default function DashboardPage() {
+  const { drafts, loading, error } = useDashboardData();
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-slate-950">
-      <Universe />
-
-      <section className="relative z-10 mx-auto flex max-w-7xl flex-col gap-12 px-8 py-24">
-        <GalaxyHero />
-
-        <Greeting />
-
-        <QuickActions />
-
-        <Stats />
-
-        <section>
-          <h2 className="mb-8 bg-linear-to-r from-white to-yellow-300 bg-clip-text text-3xl font-bold text-transparent">
-            Últimas experiências
-          </h2>
-
-          <ExperienceList />
-        </section>
-      </section>
-    </main>
+    <DashboardShell>
+      <div className="flex flex-col gap-14">
+        <DashboardHeader />
+        <HeroActions />
+        <JourneyStats drafts={drafts} loading={loading} error={error} />
+        <ExperienceSection drafts={drafts} loading={loading} error={error} />
+      </div>
+    </DashboardShell>
   );
 }
