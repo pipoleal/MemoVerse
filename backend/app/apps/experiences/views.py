@@ -20,6 +20,7 @@ from .serializers import (
     PublishResponseSerializer,
     UploadIntentSerializer,
 )
+from .services.draft_deletion import DraftDeletionService, DraftNotDeletable
 from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
 from .storage import delete_object, generate_presigned_read_url, get_r2_client
@@ -56,6 +57,23 @@ class DraftDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+    def delete(self, request, draft_id):
+        # get_owned_draft_or_404 já garante autenticação (IsAuthenticated),
+        # ownership e 404 (nunca 403) tanto para draft inexistente quanto
+        # para draft de outro usuário — nenhuma distinção revelada, mesmo
+        # padrão do resto do app. owner/status nunca vêm do request: o
+        # owner é sempre request.user, e o status é sempre o valor já
+        # persistido no banco (lido de dentro de DraftDeletionService).
+        draft = get_owned_draft_or_404(request, draft_id)
+        try:
+            DraftDeletionService.delete(draft)
+        except DraftNotDeletable:
+            return Response(
+                {"detail": "Este draft não pode ser excluído no status atual."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class DraftPublishView(APIView):

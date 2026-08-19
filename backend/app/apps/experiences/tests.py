@@ -16,6 +16,7 @@ from apps.payments.models import Payment, Plan
 
 from . import storage
 from .models import ExperienceDraft, Media
+from .services.draft_deletion import DraftDeletionService, DraftNotDeletable
 from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
 
@@ -87,6 +88,10 @@ def upload_complete_url(draft_id, media_id):
 
 def media_delete_url(draft_id, media_id):
     return f"/api/experiences/drafts/{draft_id}/media/{media_id}/"
+
+
+def draft_detail_url(draft_id):
+    return f"/api/experiences/drafts/{draft_id}/"
 
 
 def public_url(slug):
@@ -1015,3 +1020,227 @@ class MediaUploadIntentCleanupTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Media.objects.filter(draft=self.draft).count(), 10)
+
+
+class DraftDeleteViewTests(TestCase):
+    """DELETE /api/experiences/drafts/<id>/ — ver views.DraftDetailView.delete
+    e services.draft_deletion.DraftDeletionService.
+
+    Regra central testada aqui: só um draft sem slug, sem Payment associado
+    e com status exatamente 'draft' pode ser excluído — nunca
+    awaiting_payment/payment_failed/paid/published, e nunca um draft de
+    outro usuário (sempre 404, nunca 403, mesmo padrão do resto do app)."""
+
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+        self.other_user = make_user("other@example.com")
+        self.draft = make_draft(self.owner)
+
+    def _patch_r2(self, delete_object_side_effect=None):
+        mock_client = MagicMock()
+        if delete_object_side_effect is not None:
+            mock_client.delete_object.side_effect = delete_object_side_effect
+        return patch("apps.experiences.storage.get_r2_client", return_value=mock_client)
+
+    # 1. Exclusão do próprio draft --------------------------------------
+
+    def test_owner_can_delete_own_draft(self):
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+
+    def test_response_body_is_empty_on_success(self):
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+        self.assertEqual(response.content, b"")
+
+    # 2. Ownership --------------------------------------------------------
+
+    def test_other_user_cannot_delete_someone_elses_draft(self):
+        with self._patch_r2():
+            response = auth_client(self.other_user).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+
+    # 3-6. Guarda de status ------------------------------------------------
+
+    def test_awaiting_payment_draft_cannot_be_deleted(self):
+        draft = make_draft(self.owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        response = auth_client(self.owner).delete(draft_detail_url(draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(ExperienceDraft.objects.filter(id=draft.id).exists())
+
+    def test_payment_failed_draft_cannot_be_deleted(self):
+        draft = make_draft(self.owner, status=ExperienceDraft.Status.PAYMENT_FAILED)
+        response = auth_client(self.owner).delete(draft_detail_url(draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(ExperienceDraft.objects.filter(id=draft.id).exists())
+
+    def test_paid_draft_cannot_be_deleted(self):
+        draft = make_draft(self.owner, status=ExperienceDraft.Status.PAID)
+        response = auth_client(self.owner).delete(draft_detail_url(draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(ExperienceDraft.objects.filter(id=draft.id).exists())
+
+    def test_published_draft_cannot_be_deleted(self):
+        draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="test-slug-1",
+            published_at=timezone.now(),
+        )
+        response = auth_client(self.owner).delete(draft_detail_url(draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(ExperienceDraft.objects.filter(id=draft.id).exists())
+
+    # 7. Payment associado, mesmo com status draft -------------------------
+
+    def test_draft_with_payment_cannot_be_deleted_even_if_status_is_draft(self):
+        # Cenário defensivo: mesmo que o status ainda esteja como "draft" no
+        # banco, a existência de QUALQUER Payment associado bloqueia a
+        # exclusão — nunca confiamos só no status.
+        make_payment(draft=self.draft, status=Payment.Status.PENDING)
+
+        response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+
+    # 8-9. Mídia + R2 -------------------------------------------------------
+
+    def test_deleting_draft_removes_its_media_records(self):
+        media_a = make_media(self.draft)
+        media_b = make_media(self.draft, media_type=Media.Type.VIDEO)
+
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Media.objects.filter(id__in=[media_a.id, media_b.id]).exists())
+
+    def test_deletion_calls_r2_delete_object_for_each_media(self):
+        media_a = make_media(self.draft)
+        media_b = make_media(self.draft, media_type=Media.Type.VIDEO)
+
+        with patch("apps.experiences.services.draft_deletion.delete_object") as mock_delete_object:
+            auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        mock_delete_object.assert_any_call(media_a.storage_key)
+        mock_delete_object.assert_any_call(media_b.storage_key)
+        self.assertEqual(mock_delete_object.call_count, 2)
+
+    def test_other_drafts_media_is_never_touched(self):
+        other_draft = make_draft(self.owner)
+        other_media = make_media(other_draft)
+        own_media = make_media(self.draft)
+
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Media.objects.filter(id=own_media.id).exists())
+        self.assertTrue(Media.objects.filter(id=other_media.id).exists())
+        self.assertTrue(ExperienceDraft.objects.filter(id=other_draft.id).exists())
+
+    def test_r2_client_error_does_not_block_draft_deletion(self):
+        media = make_media(self.draft)
+        error = ClientError({"Error": {"Code": "500", "Message": "Internal Error"}}, "DeleteObject")
+
+        with self._patch_r2(delete_object_side_effect=error):
+            response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+        self.assertFalse(Media.objects.filter(id=media.id).exists())
+
+    def test_r2_not_configured_does_not_block_draft_deletion(self):
+        make_media(self.draft)
+        with patch(
+            "apps.experiences.storage.get_r2_client",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            response = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+
+    # 10-11. Inexistência / idempotência do lado do cliente -----------------
+
+    def test_nonexistent_draft_returns_404(self):
+        response = auth_client(self.owner).delete(draft_detail_url(uuid.uuid4()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_repeating_delete_after_success_returns_404(self):
+        with self._patch_r2():
+            first = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+        self.assertEqual(first.status_code, status.HTTP_204_NO_CONTENT)
+
+        second = auth_client(self.owner).delete(draft_detail_url(self.draft.id))
+        self.assertEqual(second.status_code, status.HTTP_404_NOT_FOUND)
+
+    # 12. Autenticação ------------------------------------------------------
+
+    def test_anonymous_user_receives_401(self):
+        response = APIClient().delete(draft_detail_url(self.draft.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertTrue(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+
+    # Segurança: body do request nunca é lido para decidir nada -------------
+
+    def test_body_owner_and_status_fields_are_ignored(self):
+        # DELETE nunca lê request.data: owner vem só de request.user, status
+        # vem só do banco. Um body tentando forjar outro dono/status não
+        # tem nenhum efeito.
+        with self._patch_r2():
+            response = auth_client(self.owner).delete(
+                draft_detail_url(self.draft.id),
+                data={"owner": str(self.other_user.id), "status": "published", "id": str(uuid.uuid4())},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ExperienceDraft.objects.filter(id=self.draft.id).exists())
+
+
+class DraftDeletionServiceUnitTests(TestCase):
+    """services.draft_deletion.DraftDeletionService — testes diretos no
+    service, sem passar pela view/HTTP."""
+
+    def _patch_r2(self):
+        mock_client = MagicMock()
+        return patch("apps.experiences.storage.get_r2_client", return_value=mock_client)
+
+    def test_delete_raises_draft_not_deletable_for_non_draft_status(self):
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+
+        with self.assertRaises(DraftNotDeletable):
+            DraftDeletionService.delete(draft)
+        self.assertTrue(ExperienceDraft.objects.filter(id=draft.id).exists())
+
+    def test_delete_raises_draft_not_deletable_when_payment_exists(self):
+        user = make_user()
+        draft = make_draft(user)
+        make_payment(draft=draft, status=Payment.Status.APPROVED)
+
+        with self.assertRaises(DraftNotDeletable):
+            DraftDeletionService.delete(draft)
+        self.assertTrue(ExperienceDraft.objects.filter(id=draft.id).exists())
+
+    def test_delete_removes_draft_and_cascades_media(self):
+        user = make_user()
+        draft = make_draft(user)
+        media = make_media(draft)
+
+        with self._patch_r2():
+            DraftDeletionService.delete(draft)
+
+        self.assertFalse(ExperienceDraft.objects.filter(id=draft.id).exists())
+        self.assertFalse(Media.objects.filter(id=media.id).exists())
