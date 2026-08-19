@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useOptionalExperience } from "../experience/context/ExperienceContext";
 import type { Experience } from "../experience/types";
 
+import GalaxyChapter from "./scenes/GalaxyChapter";
 import LetterChapter from "./scenes/LetterChapter";
 import PlanetScene from "./scenes/PlanetScene";
 import RecipientRevealChapter from "./scenes/RecipientRevealChapter";
@@ -53,6 +54,14 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
   const [chapter, setChapter] =
     useState<ExperienceChapter>("idle");
   const [hasInteracted, setHasInteracted] = useState(false);
+  // Bumped by "Reviver experiência" only, to force MusicPlayer to remount so
+  // its YouTube player restarts from 0 instead of resuming where it left
+  // off. Nothing else needs this: every chapter block below is only
+  // rendered while `chapter` matches it, so sending `chapter` back to
+  // "idle" already unmounts/remounts each one (PlanetScene, MemoriesCanvas,
+  // GalaxyChapter's own Canvas/WebGL context included) with fresh state for
+  // free — no extra key required there.
+  const [reviveCount, setReviveCount] = useState(0);
 
   const send = useCallback((event: ExperienceRuntimeEvent) => {
     setChapter((currentChapter) => {
@@ -94,6 +103,12 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
     if (chapter === "completed") onCompleted?.();
   }, [chapter, onCompleted]);
 
+  function handleRevive() {
+    setHasInteracted(false);
+    setChapter("idle");
+    setReviveCount((count) => count + 1);
+  }
+
   if (!experience) {
     // Neither an `experience` prop nor an ExperienceProvider ancestor was
     // found — same fail-fast guarantee useExperience() gave before this
@@ -110,6 +125,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
   return (
     <main className="relative min-h-screen w-full overflow-hidden bg-black">
       <MusicPlayer
+        key={reviveCount}
         provider={experience.music.provider}
         url={experience.music.url}
         playing={hasInteracted}
@@ -196,6 +212,19 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
                 send("MEMORIES_COMPLETE");
               }}
             />
+          </motion.div>
+        )}
+
+        {chapter === "completed" && (
+          <motion.div
+            key="completed"
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={CHAPTER_TRANSITION}
+          >
+            <GalaxyChapter onRevive={handleRevive} />
           </motion.div>
         )}
       </AnimatePresence>
