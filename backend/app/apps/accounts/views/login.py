@@ -1,3 +1,4 @@
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView  # type: ignore[import]
 
 from ..serializers.login import LoginSerializer
@@ -9,3 +10,5 @@ class LoginView(TokenObtainPairView):
     """
 
     serializer_class = LoginSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"

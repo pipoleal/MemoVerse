@@ -59,7 +59,9 @@ export default function LoginForm() {
       <Input label="E-mail" type="email" name="email" placeholder="Digite seu e-mail" value={email} onChange={(event) => setEmail(event.target.value)} required />
       <PasswordInput label="Senha" name="password" placeholder="Digite sua senha" value={password} onChange={(event) => setPassword(event.target.value)} required />
       <div className="flex justify-end">
-        <button type="button" className="text-sm text-yellow-400 transition hover:text-yellow-300">Esqueceu sua senha?</button>
+        <span className="text-sm text-white/40" title="Recuperação de senha ainda não está disponível">
+          Esqueceu sua senha? Em breve.
+        </span>
       </div>
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       <Button type="submit" className="w-full">{loading ? "Entrando..." : "Entrar"}</Button>

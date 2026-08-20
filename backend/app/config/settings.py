@@ -22,17 +22,30 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Quick-start development settings - unsuitable for production
 #
-# All three defaults below reproduce the exact previous hardcoded local-dev
-# behavior when no environment variable is set, so nothing changes for
-# `runserver` without a `.env`. A real deployment (Render) must override
-# SECRET_KEY, DEBUG and ALLOWED_HOSTS via environment variables.
+# Fail-closed: DEBUG now defaults to False, so a deployment that forgets to
+# set it never silently boots in debug mode. Local development must set
+# DEBUG=True in its .env (see .env.example) to get the previous convenient
+# behavior back — that's the one deliberate, explicit opt-in, not a default.
+#
+# SECRET_KEY mirrors the same gate: the insecure hardcoded fallback below
+# only exists to make `manage.py runserver` work out of the box in DEBUG
+# mode, and is unreachable whenever DEBUG=False. A real deployment that
+# omits SECRET_KEY now fails to boot with an explicit error instead of
+# silently reusing a value that is checked into source control.
 
-SECRET_KEY = config(
-    "SECRET_KEY",
-    default="django-insecure-**f5&8s#wb(__j1n#cqpv^s2k-ft)o&b7ee37mbk98$ja&b+dp",
-)
 
-DEBUG = config("DEBUG", default=True, cast=bool)
+def _resolve_secret_key(debug, get_config=config):
+    if debug:
+        return get_config(
+            "SECRET_KEY",
+            default="django-insecure-**f5&8s#wb(__j1n#cqpv^s2k-ft)o&b7ee37mbk98$ja&b+dp",
+        )
+    return get_config("SECRET_KEY")
+
+
+DEBUG = config("DEBUG", default=False, cast=bool)
+
+SECRET_KEY = _resolve_secret_key(DEBUG)
 
 # Comma-separated in the environment, e.g. ALLOWED_HOSTS=my-backend.onrender.com
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
@@ -170,6 +183,15 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    # Opt-in per view via `throttle_classes`/`throttle_scope` (see
+    # apps.accounts.views) — deliberately not set as DEFAULT_THROTTLE_CLASSES,
+    # so the rest of the API stays unthrottled. Only the auth endpoints that
+    # are realistic brute-force/enumeration targets use these scopes.
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "10/min",
+        "register": "10/hour",
+        "token_refresh": "30/min",
+    },
 }
 
 

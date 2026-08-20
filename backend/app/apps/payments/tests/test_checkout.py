@@ -219,47 +219,23 @@ class CheckoutPlanResolutionTests(TestCase):
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
 
 
-class TempR1TestOverrideTests(TestCase):
-    """CheckoutService._TEMP_R1_TEST_OWNER_EMAIL: override temporário e
-    restrito de cobrança de R$1,00 para uma única conta de teste. Estes
-    testes existem para blindar dois invariantes explicitamente exigidos
-    na Etapa 3 (Planos + Checkout): o override continua funcionando com os
-    3 novos planos comerciais, e ele nunca se amplia para nenhuma outra
-    conta — em nenhum dos 3 planos."""
+class CheckoutRealPriceRegardlessOfEmailTests(TestCase):
+    """Etapa 5 — Fase C: o bypass temporário de R$1,00
+    (CheckoutService._TEMP_R1_TEST_OWNER_EMAIL) foi removido. Estes testes
+    substituem TempR1TestOverrideTests e blindam que nenhum e-mail — nem
+    mesmo o que antes recebia o valor especial — altera o preço cobrado."""
 
-    TEST_EMAIL = CheckoutService._TEMP_R1_TEST_OWNER_EMAIL
+    FORMER_OVERRIDE_EMAIL = "felipeleal12345678910@gmail.com"
 
-    def test_override_forces_r1_regardless_of_plan_weekly(self):
-        user = make_user(self.TEST_EMAIL)
-        draft = make_draft(user)
-        with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
-        payment = Payment.objects.get(draft=draft)
-        self.assertEqual(payment.amount, Decimal("1.00"))
-        self.assertEqual(payment.plan.code, "weekly")
-
-    def test_override_forces_r1_regardless_of_plan_lifetime(self):
-        user = make_user(self.TEST_EMAIL)
-        draft = make_draft(user)
-        with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime"})
-        payment = Payment.objects.get(draft=draft)
-        self.assertEqual(payment.amount, Decimal("1.00"))
-        self.assertEqual(payment.plan.code, "lifetime")
-
-    def test_override_forces_r1_regardless_of_plan_lifetime_galaxy(self):
-        user = make_user(self.TEST_EMAIL)
+    def test_former_override_email_now_pays_the_real_plan_price(self):
+        user = make_user(self.FORMER_OVERRIDE_EMAIL)
         draft = make_draft(user)
         with patch_mp_client():
             auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get(draft=draft)
-        self.assertEqual(payment.amount, Decimal("1.00"))
-        self.assertEqual(payment.plan.code, "lifetime_galaxy")
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
-    def test_override_does_not_apply_to_any_other_account(self):
-        # Regressão explícita contra ampliação do comportamento: qualquer
-        # e-mail diferente do exato e-mail de teste sempre paga o preço real
-        # do plano, mesmo planos de maior valor (mais tentador de "vazar").
+    def test_any_other_account_pays_the_real_plan_price(self):
         other_user = make_user("nao-e-a-conta-de-teste@example.com")
         draft = make_draft(other_user)
         with patch_mp_client():
@@ -267,7 +243,7 @@ class TempR1TestOverrideTests(TestCase):
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.amount, Decimal("39.90"))
 
-    def test_client_cannot_spoof_the_test_email_via_request_body(self):
+    def test_client_cannot_spoof_a_special_price_via_request_body(self):
         # draft.owner.email vem sempre do usuário autenticado dono do draft
         # (nunca de um campo do body) — CheckoutRequestSerializer nem
         # declara nada parecido com "email"/"owner_email", então o DRF
@@ -277,7 +253,11 @@ class TempR1TestOverrideTests(TestCase):
         with patch_mp_client():
             auth_client(real_user).post(
                 checkout_url(draft.id),
-                {"plan_code": "lifetime", "email": self.TEST_EMAIL, "owner_email": self.TEST_EMAIL},
+                {
+                    "plan_code": "lifetime",
+                    "email": self.FORMER_OVERRIDE_EMAIL,
+                    "owner_email": self.FORMER_OVERRIDE_EMAIL,
+                },
             )
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.amount, Decimal("29.90"))
@@ -321,17 +301,6 @@ class CheckoutResponsePlanDetailsTests(TestCase):
             response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
         self.assertEqual(response.data["plan"]["price"], "39.90")
         self.assertIs(response.data["plan"]["features"]["galaxy_live_enabled"], True)
-
-    def test_response_price_reflects_r1_override_not_the_catalog_price(self):
-        # A tela de resumo tem que mostrar o valor que será cobrado de
-        # verdade (Payment.amount), não o preço de tabela do plano — para a
-        # conta de teste isso é R$1,00 mesmo que o plano escolhido custe
-        # R$39,90. Ver TempR1TestOverrideTests para a cobrança em si.
-        user = make_user(CheckoutService._TEMP_R1_TEST_OWNER_EMAIL)
-        draft = make_draft(user)
-        with patch_mp_client():
-            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
-        self.assertEqual(response.data["plan"]["price"], "1.00")
 
     def test_response_price_is_unaffected_by_a_later_plan_price_change(self):
         user = make_user()

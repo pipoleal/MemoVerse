@@ -25,7 +25,6 @@ Dois meios de pagamento suportados, sempre pela mesma Orders API:
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
 
 from django.db import IntegrityError, transaction
 from django.db.models import Max
@@ -197,12 +196,6 @@ class CheckoutService:
             raise ActiveCheckoutConflict(active_payment)
         return active_payment
 
-    # TEMPORÁRIO — teste controlado de produção com cobrança real de R$1,00.
-    # Restrito ao e-mail exato do dono do draft (nunca a um valor vindo do
-    # cliente) — nenhum outro usuário consegue disparar isso. Remover este
-    # bloco e a referência em _create_attempt logo após o teste.
-    _TEMP_R1_TEST_OWNER_EMAIL = "felipeleal12345678910@gmail.com"
-
     @staticmethod
     def _create_attempt(*, draft: ExperienceDraft, plan: Plan) -> Payment:
         next_attempt = (
@@ -211,11 +204,8 @@ class CheckoutService:
 
         # Congelado a partir de Plan.price/currency agora. A partir daqui
         # Payment.amount é a fonte histórica deste pagamento — nunca
-        # recalculado a partir do preço atual do Plan. TEMPORÁRIO: exceção
-        # de R$1,00 restrita ao e-mail exato do dono do draft (ver acima).
+        # recalculado a partir do preço atual do Plan.
         amount = plan.price
-        if draft.owner.email == CheckoutService._TEMP_R1_TEST_OWNER_EMAIL:
-            amount = Decimal("1.00")
 
         return Payment.objects.create(
             draft=draft,
