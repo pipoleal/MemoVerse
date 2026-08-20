@@ -88,6 +88,8 @@ class CommercialPlansSeedTests(TestCase):
         self.assertEqual(plan.get_feature("duration_days"), 7)
         self.assertIs(plan.get_feature("is_lifetime"), False)
         self.assertIs(plan.get_feature("galaxy_live_enabled"), False)
+        self.assertEqual(plan.get_feature("highlights")[-1], "Disponível por 7 dias")
+        self.assertEqual(len(plan.get_feature("highlights")), 6)
 
     def test_lifetime_plan_values(self):
         plan = Plan.objects.get(code="lifetime")
@@ -98,6 +100,8 @@ class CommercialPlansSeedTests(TestCase):
         self.assertIsNone(plan.get_feature("duration_days"))
         self.assertIs(plan.get_feature("is_lifetime"), True)
         self.assertIs(plan.get_feature("galaxy_live_enabled"), False)
+        self.assertEqual(plan.get_feature("highlights")[-1], "Disponível para sempre")
+        self.assertEqual(len(plan.get_feature("highlights")), 6)
 
     def test_lifetime_galaxy_plan_values(self):
         plan = Plan.objects.get(code="lifetime_galaxy")
@@ -108,6 +112,10 @@ class CommercialPlansSeedTests(TestCase):
         self.assertIsNone(plan.get_feature("duration_days"))
         self.assertIs(plan.get_feature("is_lifetime"), True)
         self.assertIs(plan.get_feature("galaxy_live_enabled"), True)
+        self.assertEqual(
+            plan.get_feature("highlights")[-2:], ["Galáxia Viva", "Recursos especiais da Galáxia Viva"]
+        )
+        self.assertEqual(len(plan.get_feature("highlights")), 8)
 
     def test_only_the_three_commercial_plans_are_active(self):
         active_codes = set(Plan.objects.filter(is_active=True).values_list("code", flat=True))

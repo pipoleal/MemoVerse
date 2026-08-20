@@ -47,8 +47,19 @@ class PlanListViewTests(TestCase):
         # arredondamento de float) — o contrato da API é "19.90", não 19.90.
         self.assertEqual(weekly["price"], "19.90")
         self.assertEqual(weekly["currency"], "BRL")
+        self.assertEqual(weekly["features"]["duration_days"], 7)
+        self.assertIs(weekly["features"]["is_lifetime"], False)
+        self.assertIs(weekly["features"]["galaxy_live_enabled"], False)
         self.assertEqual(
-            weekly["features"], {"duration_days": 7, "is_lifetime": False, "galaxy_live_enabled": False}
+            weekly["features"]["highlights"],
+            [
+                "Experiência personalizada",
+                "Fotos e vídeos",
+                "Carta personalizada",
+                "Música",
+                "Link compartilhável",
+                "Disponível por 7 dias",
+            ],
         )
 
     def test_lifetime_plan_shape_and_values(self):
@@ -58,6 +69,17 @@ class PlanListViewTests(TestCase):
         self.assertEqual(lifetime["price"], "29.90")
         self.assertIs(lifetime["features"]["is_lifetime"], True)
         self.assertIs(lifetime["features"]["galaxy_live_enabled"], False)
+        self.assertEqual(
+            lifetime["features"]["highlights"],
+            [
+                "Experiência personalizada",
+                "Fotos e vídeos",
+                "Carta personalizada",
+                "Música",
+                "Link compartilhável",
+                "Disponível para sempre",
+            ],
+        )
 
     def test_lifetime_galaxy_plan_shape_and_values(self):
         response = self.client.get(PLANS_URL)
@@ -66,6 +88,27 @@ class PlanListViewTests(TestCase):
         self.assertEqual(lifetime_galaxy["price"], "39.90")
         self.assertIs(lifetime_galaxy["features"]["is_lifetime"], True)
         self.assertIs(lifetime_galaxy["features"]["galaxy_live_enabled"], True)
+        self.assertEqual(
+            lifetime_galaxy["features"]["highlights"],
+            [
+                "Experiência personalizada",
+                "Fotos e vídeos",
+                "Carta personalizada",
+                "Música",
+                "Link compartilhável",
+                "Disponível para sempre",
+                "Galáxia Viva",
+                "Recursos especiais da Galáxia Viva",
+            ],
+        )
+
+    def test_weekly_and_lifetime_highlights_never_mention_each_other(self):
+        # Regra explícita: cada plano é compreensível sozinho — nenhuma
+        # frase de herança tipo "Tudo do plano X" em nenhum highlight.
+        response = self.client.get(PLANS_URL)
+        for item in response.data:
+            for highlight in item["features"]["highlights"]:
+                self.assertNotIn("Tudo do", highlight)
 
     def test_response_items_never_expose_internal_fields(self):
         response = self.client.get(PLANS_URL)

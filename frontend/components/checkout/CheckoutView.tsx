@@ -48,13 +48,6 @@ function planCardTitle(name: string): string {
   return name.replace(/^MemoVerse\s+/i, "").toUpperCase();
 }
 
-function planDurationLabel(plan: Plan): string {
-  const base = plan.features.is_lifetime
-    ? "Sua experiência para sempre"
-    : `Sua experiência disponível por ${plan.features.duration_days} dias`;
-  return plan.features.galaxy_live_enabled ? `${base} + Galáxia Viva` : base;
-}
-
 // Reused wherever the currently-selected/checked-out plan needs to be
 // summarized — never re-derived or hardcoded a second time.
 function currentPlanForSummary(phase: Phase): Plan | null {
@@ -89,6 +82,11 @@ function statusLabel(status: PaymentStatus): string {
 export default function CheckoutView({ draftId }: { draftId: string }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [copyFeedback, setCopyFeedback] = useState<"idle" | "copied" | "failed">("idle");
+  // Cache of the last fetched plan catalog, kept in sync wherever
+  // fetchActivePlans() is called (initialize, retryAfterFailure) — lets
+  // "Voltar aos planos" return to selecting_plan instantly, as a pure local
+  // state transition, without ever re-fetching or touching the backend.
+  const [plans, setPlans] = useState<Plan[]>([]);
 
   // Guards the initial mount sequence against React StrictMode's dev-only
   // double-invoke of effects — without this, two POST/GET requests would
@@ -144,13 +142,14 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
   async function retryAfterFailure(planCode: string) {
     setPhase({ kind: "loading" });
     try {
-      const plans = await fetchActivePlans();
-      if (plans.length === 0) {
+      const freshPlans = await fetchActivePlans();
+      setPlans(freshPlans);
+      if (freshPlans.length === 0) {
         setPhase({ kind: "error", message: "Nenhum plano disponível no momento. Tente novamente em instantes." });
         return;
       }
-      const plan = plans.find((candidate) => candidate.code === planCode);
-      setPhase(plan ? { kind: "selecting_method", plan } : { kind: "selecting_plan", plans });
+      const plan = freshPlans.find((candidate) => candidate.code === planCode);
+      setPhase(plan ? { kind: "selecting_method", plan } : { kind: "selecting_plan", plans: freshPlans });
     } catch (error) {
       setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
     }
@@ -166,18 +165,19 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
         // Nothing started yet: needs the real plan catalog before the user
         // can choose anything — only fetched here, never when resuming an
         // already-chosen plan below (that path doesn't need it).
-        let plans: Plan[];
+        let fetchedPlans: Plan[];
         try {
-          plans = await fetchActivePlans();
+          fetchedPlans = await fetchActivePlans();
         } catch (error) {
           setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
           return;
         }
-        if (plans.length === 0) {
+        setPlans(fetchedPlans);
+        if (fetchedPlans.length === 0) {
           setPhase({ kind: "error", message: "Nenhum plano disponível no momento. Tente novamente em instantes." });
           return;
         }
-        setPhase({ kind: "selecting_plan", plans });
+        setPhase({ kind: "selecting_plan", plans: fetchedPlans });
         return;
       }
 
@@ -301,6 +301,7 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
           {phase.kind === "selecting_method" && (
             <MethodSelectionBlock
               plan={phase.plan}
+              onBack={() => setPhase({ kind: "selecting_plan", plans })}
               onChoosePix={() => void startCheckout(phase.plan.code, "pix")}
               onSubmitCard={(cardData) => startCheckout(phase.plan.code, "card", cardData)}
             />
@@ -390,7 +391,14 @@ function PlanCard({ plan, onSelect }: { plan: Plan; onSelect: () => void }) {
       )}
       <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">{planCardTitle(plan.name)}</p>
       <p className="text-3xl font-black text-white">{formatPlanPrice(plan.price, plan.currency)}</p>
-      <p className="text-sm text-slate-300">{planDurationLabel(plan)}</p>
+      <ul className="w-full space-y-1.5 text-left text-sm text-slate-300">
+        {plan.features.highlights.map((item) => (
+          <li key={item} className="flex items-start gap-2">
+            <span className="mt-0.5 text-yellow-400">✓</span>
+            {item}
+          </li>
+        ))}
+      </ul>
       <button
         type="button"
         onClick={onSelect}
@@ -404,10 +412,12 @@ function PlanCard({ plan, onSelect }: { plan: Plan; onSelect: () => void }) {
 
 function MethodSelectionBlock({
   plan,
+  onBack,
   onChoosePix,
   onSubmitCard,
 }: {
   plan: Plan;
+  onBack: () => void;
   onChoosePix: () => void;
   onSubmitCard: (cardData: CardCheckoutData) => Promise<void>;
 }) {
@@ -415,6 +425,14 @@ function MethodSelectionBlock({
 
   return (
     <div className="flex flex-col gap-6">
+      <button
+        type="button"
+        onClick={onBack}
+        className="self-start text-sm font-semibold text-slate-400 transition-colors hover:text-yellow-400"
+      >
+        ← Voltar aos planos
+      </button>
+
       <div className="flex gap-2 rounded-full border border-white/10 bg-white/5 p-1">
         <button
           type="button"

@@ -14,6 +14,11 @@ export type PlanFeatures = {
   duration_days: number | null;
   is_lifetime: boolean;
   galaxy_live_enabled: boolean;
+  // Ready-to-render commercial differentials, in display order — the
+  // backend is the only source (Plan.features["highlights"], seeded in
+  // apps/payments/migrations/0006_add_plan_highlights.py). Never composed,
+  // translated, or hardcoded on the frontend.
+  highlights: string[];
 };
 
 // Full plan info — GET /payments/plans/ and CheckoutResponse.plan both

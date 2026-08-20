@@ -298,9 +298,20 @@ class CheckoutResponsePlanDetailsTests(TestCase):
         # da API é "19.90", não 19.90.
         self.assertEqual(response.data["plan"]["price"], "19.90")
         self.assertEqual(response.data["plan"]["currency"], "BRL")
+        features = response.data["plan"]["features"]
+        self.assertEqual(features["duration_days"], 7)
+        self.assertIs(features["is_lifetime"], False)
+        self.assertIs(features["galaxy_live_enabled"], False)
         self.assertEqual(
-            response.data["plan"]["features"],
-            {"duration_days": 7, "is_lifetime": False, "galaxy_live_enabled": False},
+            features["highlights"],
+            [
+                "Experiência personalizada",
+                "Fotos e vídeos",
+                "Carta personalizada",
+                "Música",
+                "Link compartilhável",
+                "Disponível por 7 dias",
+            ],
         )
 
     def test_response_includes_galaxy_live_enabled_true_for_lifetime_galaxy(self):
