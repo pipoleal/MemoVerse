@@ -64,6 +64,18 @@ type ExperienceContextType = {
   // Resolves to null when there is no access token, or if creation fails.
   ensureDraftId: () => Promise<string | null>;
 
+  // Etapa 7: ensures a draft exists (creating it on the earliest step
+  // transition that has real data to protect) and PATCHes the current
+  // snapshot of every text field to it. Meant to be called from the
+  // wizard's step-transition handler, fire-and-forget (not awaited) so
+  // navigation never waits on it — a failure here is silently swallowed
+  // (same policy as ensureDraftId) because the next step transition
+  // re-sends the full snapshot anyway, self-healing any transient error
+  // without needing explicit retry logic. PreviewStep keeps its own
+  // separate, blocking sync (it precedes checkout) — this is deliberately
+  // not shared with it, to avoid touching that already-tested path.
+  syncDraftProgress: () => Promise<void>;
+
   photoEntries: MediaEntry[];
   setPhotoEntries: Dispatch<SetStateAction<MediaEntry[]>>;
 
@@ -152,6 +164,19 @@ export function ExperienceProvider({
     return promise;
   }, [draftId]);
 
+  const syncDraftProgress = useCallback(async (): Promise<void> => {
+    const id = await ensureDraftId();
+    if (!id) return;
+
+    try {
+      await api.patch(`/experiences/drafts/${id}/`, toPayload(experienceRef.current));
+    } catch {
+      // Fire-and-forget by design (see the type comment above) — the next
+      // step transition re-sends the full snapshot, so a transient failure
+      // here is not fatal.
+    }
+  }, [ensureDraftId]);
+
   // Loads an existing draft's data when the provider is mounted to resume
   // one (Dashboard "Continuar edição"). `cancelled` alone (no mount-guard
   // ref) is deliberate — see PublicExperienceView.tsx for why a ref-based
@@ -219,6 +244,7 @@ export function ExperienceProvider({
         updateExperience,
         draftId,
         ensureDraftId,
+        syncDraftProgress,
         photoEntries,
         setPhotoEntries,
         videoEntries,

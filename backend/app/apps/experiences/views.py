@@ -1,3 +1,4 @@
+import logging
 import uuid
 from pathlib import PurePath
 
@@ -9,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -25,6 +27,8 @@ from .services.draft_deletion import DraftDeletionService, DraftNotDeletable
 from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
 from .storage import delete_object, generate_presigned_read_url, get_r2_client
+
+logger = logging.getLogger(__name__)
 
 
 def get_owned_draft_or_404(request, draft_id):
@@ -60,8 +64,15 @@ class DraftListCreateView(APIView):
 
     def post(self, request):
         serializer = ExperienceDraftSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError:
+            # Etapa 7 — Fase C: só o evento, nunca o payload (carta/mensagem
+            # podem estar aqui) — a resposta de erro da API não muda.
+            logger.warning("draft.create.failure")
+            raise
         draft = serializer.save(owner=request.user)
+        logger.info("draft.create.success")
         return Response(ExperienceDraftSerializer(draft).data, status=status.HTTP_201_CREATED)
 
 
@@ -75,8 +86,13 @@ class DraftDetailView(APIView):
     def patch(self, request, draft_id):
         draft = get_owned_draft_or_404(request, draft_id)
         serializer = ExperienceDraftSerializer(draft, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError:
+            logger.warning("draft.patch.failure")
+            raise
         serializer.save()
+        logger.info("draft.patch.success")
         return Response(serializer.data)
 
     def delete(self, request, draft_id):

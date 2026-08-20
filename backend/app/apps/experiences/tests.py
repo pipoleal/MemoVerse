@@ -1584,3 +1584,128 @@ class _FakeRequest:
 
     def __init__(self, user):
         self.user = user
+
+
+class DraftCreationAndPatchTests(TestCase):
+    """Etapa 7 — Fase D: cobertura dos gaps identificados na auditoria —
+    criação minimalista genérica (não só tema), round-trip completo de
+    todos os campos, PATCH multi-campo simultâneo, e ownership dedicado de
+    GET/PATCH em DraftDetailView (antes só coberto para publish/media/delete)."""
+
+    def test_creating_a_draft_with_an_empty_payload_succeeds(self):
+        user = make_user()
+        response = auth_client(user).post(DRAFT_LIST_URL, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], ExperienceDraft.Status.DRAFT)
+        self.assertEqual(response.data["title"], "")
+
+    def test_creating_a_draft_with_only_one_non_theme_field_succeeds(self):
+        user = make_user()
+        response = auth_client(user).post(DRAFT_LIST_URL, {"title": "Aniversário"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "Aniversário")
+        self.assertEqual(response.data["theme"], "")
+
+    def test_created_draft_round_trips_every_field_on_get(self):
+        user = make_user()
+        payload = {
+            "experience_type": "birthday",
+            "theme": "beach",
+            "title": "Feliz Aniversário",
+            "recipient_name": "Ana",
+            "creator_name": "Bruno",
+            "event_date": "2026-12-25",
+            "letter": "Uma carta especial.",
+            "short_message": "Com carinho",
+            "music_provider": "youtube",
+            "music_url": "https://youtube.com/watch?v=abc123",
+        }
+        client = auth_client(user)
+        create_response = client.post(DRAFT_LIST_URL, payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        draft_id = create_response.data["id"]
+
+        get_response = client.get(draft_detail_url(draft_id))
+        self.assertEqual(get_response.status_code, status.HTTP_200_OK)
+        for field, value in payload.items():
+            self.assertEqual(get_response.data[field], value, f"campo {field} não bateu no round-trip")
+
+    def test_patch_updates_multiple_non_theme_fields_simultaneously(self):
+        user = make_user()
+        draft = make_draft(user)
+        response = auth_client(user).patch(
+            draft_detail_url(draft.id),
+            {"letter": "Nova carta", "short_message": "Nova mensagem", "recipient_name": "Carla"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        draft.refresh_from_db()
+        self.assertEqual(draft.letter, "Nova carta")
+        self.assertEqual(draft.short_message, "Nova mensagem")
+        self.assertEqual(draft.recipient_name, "Carla")
+
+    def test_get_draft_of_another_user_returns_404(self):
+        owner = make_user("owner-a@example.com")
+        other = make_user("owner-b@example.com")
+        draft = make_draft(owner)
+        response = auth_client(other).get(draft_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_draft_of_another_user_returns_404_and_does_not_modify_it(self):
+        owner = make_user("owner-c@example.com")
+        other = make_user("owner-d@example.com")
+        draft = make_draft(owner, title="Original")
+        response = auth_client(other).patch(
+            draft_detail_url(draft.id), {"title": "Hackeado"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        draft.refresh_from_db()
+        self.assertEqual(draft.title, "Original")
+
+
+class DraftCreateAndPatchLoggingTests(TestCase):
+    """Etapa 7 — Fase C: eventos de criação/PATCH de draft logados sem PII
+    (sem carta, mensagem, título ou qualquer conteúdo do usuário no log)."""
+
+    def _assert_no_pii_leaked(self, log_output, *, forbidden_values):
+        joined = "\n".join(log_output)
+        for value in forbidden_values:
+            self.assertNotIn(value, joined)
+
+    def test_create_success_logs_event_without_pii(self):
+        user = make_user()
+        payload = {"title": "Segredo íntimo", "letter": "Conteúdo sensível da carta"}
+        with self.assertLogs("apps.experiences.views", level="INFO") as captured:
+            response = auth_client(user).post(DRAFT_LIST_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("draft.create.success", captured.output[0])
+        self._assert_no_pii_leaked(captured.output, forbidden_values=[payload["title"], payload["letter"]])
+
+    def test_create_failure_logs_event_without_pii(self):
+        user = make_user()
+        payload = {"theme": "tema-que-nao-existe", "letter": "Carta que não deveria vazar"}
+        with self.assertLogs("apps.experiences.views", level="WARNING") as captured:
+            response = auth_client(user).post(DRAFT_LIST_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("draft.create.failure", captured.output[0])
+        self._assert_no_pii_leaked(captured.output, forbidden_values=[payload["letter"]])
+
+    def test_patch_success_logs_event_without_pii(self):
+        user = make_user()
+        draft = make_draft(user)
+        payload = {"letter": "Carta nova super privada"}
+        with self.assertLogs("apps.experiences.views", level="INFO") as captured:
+            response = auth_client(user).patch(draft_detail_url(draft.id), payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("draft.patch.success", captured.output[0])
+        self._assert_no_pii_leaked(captured.output, forbidden_values=[payload["letter"]])
+
+    def test_patch_failure_logs_event_without_pii(self):
+        user = make_user()
+        draft = make_draft(user)
+        payload = {"theme": "tema-invalido-xyz", "letter": "Outra carta privada"}
+        with self.assertLogs("apps.experiences.views", level="WARNING") as captured:
+            response = auth_client(user).patch(draft_detail_url(draft.id), payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("draft.patch.failure", captured.output[0])
+        self._assert_no_pii_leaked(captured.output, forbidden_values=[payload["letter"]])

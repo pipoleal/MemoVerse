@@ -20,7 +20,7 @@ export default function ExperienceBuilder() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
 
-  const { experience, updateExperience, isLoadingInitialDraft, initialDraftLoadError } = useExperience();
+  const { experience, updateExperience, syncDraftProgress, isLoadingInitialDraft, initialDraftLoadError } = useExperience();
 
   function validateCurrentStep() {
     if (step === 1) {
@@ -65,6 +65,13 @@ export default function ExperienceBuilder() {
     }
 
     setError("");
+
+    // Etapa 7: persist progress on every forward transition — creates the
+    // draft the first time there's real data to protect, and PATCHes
+    // whatever's been filled so far on every step after that. Fire-and-forget
+    // on purpose: navigation must never wait on this (see the type comment
+    // on syncDraftProgress for the self-healing/retry rationale).
+    void syncDraftProgress();
 
     setStep((current) => Math.min(current + 1, 8));
   }
