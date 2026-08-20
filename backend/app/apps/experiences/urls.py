@@ -7,10 +7,12 @@ from .views import (
     MediaDeleteView,
     MediaUploadCompleteView,
     MediaUploadIntentView,
+    ThemeListView,
 )
 
 
 urlpatterns = [
+    path("themes/", ThemeListView.as_view(), name="theme-list"),
     path("drafts/", DraftListCreateView.as_view(), name="draft-list-create"),
     path("drafts/<uuid:draft_id>/", DraftDetailView.as_view(), name="draft-detail"),
     path("drafts/<uuid:draft_id>/publish/", DraftPublishView.as_view(), name="draft-publish"),

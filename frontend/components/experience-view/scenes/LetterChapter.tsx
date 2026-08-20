@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { getLetterTheme } from "./letter-theme";
+import { getThemeVisual } from "@/lib/themeRegistry";
 
 type LetterChapterProps = {
   recipient: string;
@@ -43,7 +43,7 @@ export default function LetterChapter({
   const [showContinue, setShowContinue] = useState(false);
 
   const letterTheme = useMemo(
-    () => getLetterTheme(theme),
+    () => getThemeVisual(theme).letter,
     [theme]
   );
 

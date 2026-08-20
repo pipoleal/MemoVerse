@@ -174,18 +174,8 @@ export default function PlanetScene({
         setStarPhase("converge");
       }, 4700);
 
-    /*
-     * ========================================
-     * FINAL
-     *
-     * A convergência dura 2.2 segundos.
-     *
-     * Depois disso:
-     *
-     * ✦ → ClientIntroScene
-     * ========================================
-     */
-
+    // A convergência dura 2.2 segundos; ao final, onStarsComplete avança
+    // para o próximo capítulo (RecipientRevealChapter).
     completeTimerRef.current =
       setTimeout(() => {
         onStarsComplete?.();

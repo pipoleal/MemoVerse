@@ -4,6 +4,40 @@ from django.conf import settings
 from django.db import models
 
 
+class Theme(models.Model):
+    """Catálogo de temas visuais disponíveis para experiências.
+
+    Mesma filosofia de apps.payments.models.Plan: este model é a fonte de
+    verdade sobre QUAIS temas existem, seus metadados comerciais/de catálogo
+    (nome, ativo, ordem) e espaço para expansão futura (features). A
+    implementação visual em si (cores, classes, tipografia) vive só no
+    frontend (Theme Registry) — este model nunca decide como um tema é
+    desenhado, só o que existe e está disponível.
+
+    Deliberadamente SEM relação (FK) com ExperienceDraft.theme, que
+    continua sendo um CharField livre — ver o comentário em
+    ExperienceDraft.theme para o porquê.
+    """
+
+    code = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    features = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "experience_themes"
+        ordering = ["sort_order", "code"]
+
+    def __str__(self):
+        return self.code
+
+    def get_feature(self, key, default=None):
+        return self.features.get(key, default)
+
+
 class ExperienceDraft(models.Model):
     """A private, editable experience saved before payment and publication."""
 
@@ -35,6 +69,16 @@ class ExperienceDraft(models.Model):
     # feitas antes desta feature existir.
     expires_at = models.DateTimeField(null=True, blank=True)
     experience_type = models.CharField(max_length=100, blank=True)
+    # Deliberadamente uma string livre, NUNCA uma FK para Theme — uma FK
+    # exigiria migrar/backfillar todo draft e experiência publicada já
+    # existente para apontar a uma linha real de Theme (ou aceitar NULL em
+    # dados antigos), e uma futura desativação/remoção de tema no catálogo
+    # poderia quebrar leituras antigas. A validação de que o valor
+    # corresponde a um Theme ativo acontece só na ESCRITA (ver
+    # ExperienceDraftSerializer.validate_theme) — a leitura de um draft ou
+    # experiência publicada nunca é revalidada contra o catálogo atual, o
+    # que preserva 100% de compatibilidade para qualquer valor histórico,
+    # mesmo um que não exista (mais) em Theme.
     theme = models.CharField(max_length=100, blank=True)
     title = models.CharField(max_length=200, blank=True)
     recipient_name = models.CharField(max_length=200, blank=True)

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { getThemeVisual } from "@/lib/themeVisuals";
+import { getThemeVisual } from "@/lib/themeRegistry";
 import FadeIn from "../animations/FadeIn";
 import Button from "../ui/Button";
 import ThemeVisual from "./ThemeVisual";
@@ -138,7 +138,7 @@ export default function ExperienceCard({ draft }: { draft: Draft }) {
 
         <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
           <span>
-            {visual.icon} {visual.label}
+            {visual.icon} {visual.name}
           </span>
           <span className="text-slate-600">·</span>
           <span>{formatDraftDate(draft)}</span>

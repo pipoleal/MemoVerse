@@ -1,8 +1,19 @@
 from django.core.exceptions import ImproperlyConfigured
 from rest_framework import serializers
 
-from .models import ExperienceDraft, Media
+from .models import ExperienceDraft, Media, Theme
 from .storage import generate_presigned_read_url
+
+
+class ThemeSerializer(serializers.Serializer):
+    """Catálogo público de temas ativos — GET /api/experiences/themes/.
+    Nunca expõe id/is_active/sort_order/created_at/updated_at: o queryset já
+    vem filtrado por is_active e ordenado por sort_order (Theme.Meta.ordering),
+    então o frontend não precisa desses campos para montar o seletor."""
+
+    code = serializers.CharField()
+    name = serializers.CharField()
+    features = serializers.DictField()
 
 
 class MediaSerializer(serializers.ModelSerializer):
@@ -46,6 +57,21 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
         # slug is only ever set by PublicationService on first publish (see
         # models.ExperienceDraft.slug) — never client-writable, same as status.
         read_only_fields = ("id", "status", "slug", "media", "created_at", "updated_at")
+
+    def validate_theme(self, value):
+        # Só valida quando um valor é de fato enviado — "" continua permitido
+        # (mesmo comportamento de sempre, ex. um draft ainda na Etapa 1 do
+        # wizard, antes de StyleStep). Este método só roda em is_valid()/
+        # create()/update() (escrita) — NUNCA na serialização de leitura
+        # (GET), então um draft já existente com um theme fora do catálogo
+        # atual (ou removido dele) continua sendo lido e devolvido
+        # normalmente; só uma nova tentativa de GRAVAR um theme inválido é
+        # rejeitada.
+        if not value:
+            return value
+        if not Theme.objects.filter(code=value, is_active=True).exists():
+            raise serializers.ValidationError("Tema inválido ou indisponível.")
+        return value
 
 
 class PublishResponseSerializer(serializers.Serializer):

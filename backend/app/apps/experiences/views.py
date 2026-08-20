@@ -13,11 +13,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ExperienceDraft, Media
+from .models import ExperienceDraft, Media, Theme
 from .serializers import (
     ExperienceDraftSerializer,
     PublicExperienceSerializer,
     PublishResponseSerializer,
+    ThemeSerializer,
     UploadIntentSerializer,
 )
 from .services.draft_deletion import DraftDeletionService, DraftNotDeletable
@@ -28,6 +29,26 @@ from .storage import delete_object, generate_presigned_read_url, get_r2_client
 
 def get_owned_draft_or_404(request, draft_id):
     return get_object_or_404(ExperienceDraft, id=draft_id, owner=request.user)
+
+
+class ThemeListView(APIView):
+    """GET /api/experiences/themes/
+
+    Catálogo dos temas disponíveis no momento. Sem autenticação (mesmo
+    padrão de PublicExperienceView/PlanListView): tema não é dado sensível,
+    e o wizard pode chegar à etapa de escolha de tema antes de qualquer
+    chamada autenticada acontecer.
+
+    is_active=True é o único filtro — Theme.Meta.ordering já é
+    ["sort_order", "code"], então a resposta já sai ordenada sem precisar
+    de order_by() explícito aqui.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        themes = Theme.objects.filter(is_active=True)
+        return Response(ThemeSerializer(themes, many=True).data)
 
 
 class DraftListCreateView(APIView):

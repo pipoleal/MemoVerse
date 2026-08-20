@@ -6,8 +6,10 @@ import MemoryPreludeChapter from "./scenes/MemoryPreludeChapter";
 import PhotoMemoryBeat from "./PhotoMemoryBeat";
 import VideoMemoryBeat from "./VideoMemoryBeat";
 import { useInViewport } from "@/lib/useInViewport";
+import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
 
 type MemoriesCanvasProps = {
+  theme?: ThemeVisual;
   shortMessage: string;
   photos: string[];
   videos: string[];
@@ -17,6 +19,7 @@ type MemoriesCanvasProps = {
 const EMPTY_MEMORIES_DELAY = 4200;
 
 export default function MemoriesCanvas({
+  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
   shortMessage,
   photos,
   videos,
@@ -51,15 +54,15 @@ export default function MemoriesCanvas({
   }, [hasMedia, sentinelReached, onComplete]);
 
   return (
-    <div className="memories-scroll absolute inset-0 overflow-y-auto overflow-x-hidden bg-[#02040a]">
-      <MemoryPreludeChapter message={shortMessage} />
+    <div className={`memories-scroll absolute inset-0 overflow-y-auto overflow-x-hidden ${theme.gradient}`}>
+      <MemoryPreludeChapter theme={theme} message={shortMessage} />
 
       {photos.map((photo, index) => (
         <PhotoMemoryBeat key={`photo-${index}`} src={photo} index={index} total={photos.length} />
       ))}
 
       {videos.map((video, index) => (
-        <VideoMemoryBeat key={`video-${index}`} src={video} index={index} total={videos.length} />
+        <VideoMemoryBeat key={`video-${index}`} theme={theme} src={video} index={index} total={videos.length} />
       ))}
 
       {hasMedia && <div ref={sentinelRef} aria-hidden="true" className="h-24 w-full" />}

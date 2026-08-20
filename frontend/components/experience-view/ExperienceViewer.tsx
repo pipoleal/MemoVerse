@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import { useOptionalExperience } from "../experience/context/ExperienceContext";
 import type { Experience } from "../experience/types";
+import { getThemeVisual } from "@/lib/themeRegistry";
 
 import GalaxyChapter from "./scenes/GalaxyChapter";
 import LetterChapter from "./scenes/LetterChapter";
@@ -122,6 +123,14 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
     chapter === "idle" ||
     chapter === "signature-opening";
 
+  // Resolved once here and handed only to the two surfaces that were ever
+  // themed to begin with (Memórias/Fotos and a Carta) — the opening,
+  // revelação and encerramento keep MemoVerse's shared spatial identity
+  // regardless of theme; see MemoriesCanvas/LetterChapter below.
+  // Unknown/legacy/empty theme values never break this — getThemeVisual()
+  // always falls back to a complete definition (see lib/themeRegistry.ts).
+  const visual = getThemeVisual(experience.theme);
+
   return (
     <main className="relative min-h-screen w-full overflow-hidden bg-black">
       <MusicPlayer
@@ -205,6 +214,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
             transition={CHAPTER_TRANSITION}
           >
             <MemoriesCanvas
+              theme={visual}
               shortMessage={experience.shortMessage}
               photos={experience.photos}
               videos={experience.videos}

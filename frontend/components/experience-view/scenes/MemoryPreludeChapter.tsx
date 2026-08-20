@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 
+import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
+
 type MemoryPreludeChapterProps = {
+  theme?: ThemeVisual;
   message?: string;
 };
 
@@ -19,6 +22,7 @@ const particles = [
 ] as const;
 
 export default function MemoryPreludeChapter({
+  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
   message,
 }: MemoryPreludeChapterProps) {
   const [showMessage, setShowMessage] = useState(false);
@@ -37,7 +41,7 @@ export default function MemoryPreludeChapter({
   return (
     <section
       aria-label="O nascimento de uma nova estrela"
-      className="memory-prelude relative isolate flex min-h-screen w-full items-center justify-center overflow-hidden bg-[#02040a] text-white"
+      className={`memory-prelude relative isolate flex min-h-screen w-full items-center justify-center overflow-hidden text-white ${theme.gradient}`}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(29,45,85,0.22)_0%,rgba(2,4,10,0)_44%,#02040a_82%)]" />
 

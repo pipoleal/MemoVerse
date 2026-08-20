@@ -15,7 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.payments.models import Payment, Plan
 
 from . import storage
-from .models import ExperienceDraft, Media
+from .models import ExperienceDraft, Media, Theme
 from .services.draft_deletion import DraftDeletionService, DraftNotDeletable
 from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
@@ -104,6 +104,127 @@ def expire_media(media, *, minutes_ago):
     # created_at diretamente na instância antes de save().
     Media.objects.filter(id=media.id).update(created_at=timezone.now() - timedelta(minutes=minutes_ago))
     media.refresh_from_db()
+
+
+THEMES_URL = "/api/experiences/themes/"
+DRAFT_LIST_URL = "/api/experiences/drafts/"
+
+
+class ThemeListViewTests(TestCase):
+    """GET /api/experiences/themes/ — catálogo público (AllowAny) dos temas
+    ativos. Ver ThemeListView/ThemeSerializer."""
+
+    def test_no_authentication_required(self):
+        response = APIClient().get(THEMES_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_returns_the_six_existing_themes(self):
+        response = self.client.get(THEMES_URL)
+        codes = {item["code"] for item in response.data}
+        self.assertEqual(codes, {"universe", "cinema", "beach", "flowers", "night", "minimal"})
+
+    def test_an_inactive_theme_never_appears(self):
+        Theme.objects.create(code="discontinued", name="Descontinuado", is_active=False)
+        response = self.client.get(THEMES_URL)
+        codes = {item["code"] for item in response.data}
+        self.assertNotIn("discontinued", codes)
+
+    def test_results_are_ordered_by_sort_order(self):
+        response = self.client.get(THEMES_URL)
+        codes_in_order = [item["code"] for item in response.data]
+        self.assertEqual(codes_in_order, ["universe", "cinema", "beach", "flowers", "night", "minimal"])
+
+    def test_theme_shape_and_names(self):
+        response = self.client.get(THEMES_URL)
+        by_code = {item["code"]: item for item in response.data}
+        self.assertEqual(by_code["universe"]["name"], "Universo")
+        self.assertEqual(by_code["cinema"]["name"], "Cinema")
+        self.assertEqual(by_code["beach"]["name"], "Praia")
+        self.assertEqual(by_code["flowers"]["name"], "Flores")
+        self.assertEqual(by_code["night"]["name"], "Noite")
+        self.assertEqual(by_code["minimal"]["name"], "Minimalista")
+
+    def test_response_items_never_expose_internal_fields(self):
+        response = self.client.get(THEMES_URL)
+        for item in response.data:
+            self.assertEqual(set(item.keys()), {"code", "name", "features"})
+            self.assertNotIn("id", item)
+            self.assertNotIn("is_active", item)
+            self.assertNotIn("sort_order", item)
+            self.assertNotIn("created_at", item)
+            self.assertNotIn("updated_at", item)
+
+
+class ExperienceDraftThemeValidationTests(TestCase):
+    """ExperienceDraftSerializer.validate_theme — a validação só roda na
+    ESCRITA (POST/PATCH). Drafts/experiências já existentes com um theme
+    fora do catálogo atual continuam sendo lidos normalmente (nunca
+    revalidados) — ver os testes de compatibilidade no final desta classe."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client = auth_client(self.user)
+
+    def test_creating_draft_with_active_theme_is_accepted(self):
+        response = self.client.post(DRAFT_LIST_URL, {"theme": "beach"})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["theme"], "beach")
+
+    def test_creating_draft_with_empty_theme_is_accepted(self):
+        # Comportamento inalterado: um draft ainda na Etapa 1 do wizard
+        # (antes de StyleStep) nunca deve falhar por causa disso.
+        response = self.client.post(DRAFT_LIST_URL, {"theme": ""})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["theme"], "")
+
+    def test_creating_draft_without_theme_field_is_accepted(self):
+        response = self.client.post(DRAFT_LIST_URL, {})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["theme"], "")
+
+    def test_creating_draft_with_nonexistent_theme_is_rejected(self):
+        response = self.client.post(DRAFT_LIST_URL, {"theme": "does-not-exist"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("theme", response.data)
+
+    def test_creating_draft_with_inactive_theme_is_rejected(self):
+        Theme.objects.create(code="discontinued", name="Descontinuado", is_active=False)
+        response = self.client.post(DRAFT_LIST_URL, {"theme": "discontinued"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("theme", response.data)
+
+    def test_patching_draft_to_a_valid_theme_is_accepted(self):
+        draft = make_draft(self.user, theme="universe")
+        response = self.client.patch(draft_detail_url(draft.id), {"theme": "night"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        draft.refresh_from_db()
+        self.assertEqual(draft.theme, "night")
+
+    def test_patching_draft_to_an_invalid_theme_is_rejected_and_leaves_it_unchanged(self):
+        draft = make_draft(self.user, theme="universe")
+        response = self.client.patch(draft_detail_url(draft.id), {"theme": "does-not-exist"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        draft.refresh_from_db()
+        self.assertEqual(draft.theme, "universe")
+
+    # --- Compatibilidade com drafts/experiências legadas ---
+
+    def test_reading_a_draft_with_a_legacy_unknown_theme_still_works(self):
+        # Simula um draft antigo com um valor que nunca existiu (ou não
+        # existe mais) no catálogo — criado direto no banco, sem passar
+        # pelo serializer, exatamente como um registro histórico real.
+        draft = make_draft(self.user, theme="stellar")
+        response = self.client.get(draft_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["theme"], "stellar")
+
+    def test_patching_unrelated_field_on_legacy_theme_draft_does_not_revalidate_theme(self):
+        draft = make_draft(self.user, theme="stellar")
+        response = self.client.patch(draft_detail_url(draft.id), {"title": "Novo título"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        draft.refresh_from_db()
+        self.assertEqual(draft.theme, "stellar")
+        self.assertEqual(draft.title, "Novo título")
 
 
 class PublishOwnershipTests(TestCase):

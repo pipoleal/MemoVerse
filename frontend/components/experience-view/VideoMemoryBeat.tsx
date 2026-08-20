@@ -4,14 +4,21 @@ import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 
 import { useInViewport } from "@/lib/useInViewport";
+import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
 
 type VideoMemoryBeatProps = {
+  theme?: ThemeVisual;
   src: string;
   index: number;
   total: number;
 };
 
-export default function VideoMemoryBeat({ src, index, total }: VideoMemoryBeatProps) {
+export default function VideoMemoryBeat({
+  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
+  src,
+  index,
+  total,
+}: VideoMemoryBeatProps) {
   const sectionRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -42,7 +49,7 @@ export default function VideoMemoryBeat({ src, index, total }: VideoMemoryBeatPr
     <section
       ref={sectionRef}
       aria-label={`Vídeo ${index + 1} de ${total}`}
-      className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-black px-6 py-24"
+      className={`relative flex min-h-screen w-full items-center justify-center overflow-hidden px-6 py-24 ${theme.gradient}`}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(20,30,60,0.25),transparent_60%)]" />
 

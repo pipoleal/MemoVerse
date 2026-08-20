@@ -1,4 +1,4 @@
-import { getThemeVisual } from "@/lib/themeVisuals";
+import { getThemeVisual } from "@/lib/themeRegistry";
 
 // The visual "header" block of an experience card — isolated so the same
 // theme treatment can be reused wherever else a memory needs to be
