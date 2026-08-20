@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { api } from "./api";
-import { saveTokens, clearTokens, clearUserFirstName } from "./storage";
+import { saveTokens, clearTokens, clearUserFirstName, getRefreshToken } from "./storage";
 
 type LoginData = {
   email: string;
@@ -26,7 +26,21 @@ export async function login(data: LoginData) {
   }
 }
 
-export function logout() {
+export async function logout() {
+  // Etapa 8: revoga o refresh token no servidor antes de limpar o storage
+  // local — best-effort de propósito. Uma falha de rede/servidor nunca
+  // pode impedir o logout visível: o usuário sempre sai da conta local,
+  // mesmo que a revogação do lado do servidor não tenha sido confirmada
+  // (ex.: já estava sem conexão).
+  const refresh = getRefreshToken();
+  if (refresh) {
+    try {
+      await api.post("/auth/logout/", { refresh });
+    } catch {
+      // ignorado de propósito — ver comentário acima
+    }
+  }
+
   try {
     clearTokens();
     clearUserFirstName();

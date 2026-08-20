@@ -8,6 +8,7 @@ from apps.accounts.models import User
 REGISTER_URL = "/api/auth/register/"
 LOGIN_URL = "/api/auth/login/"
 REFRESH_URL = "/api/auth/refresh/"
+LOGOUT_URL = "/api/auth/logout/"
 
 
 class AuthThrottlingTests(TestCase):
@@ -106,6 +107,16 @@ class AuthThrottlingTests(TestCase):
         response = self.client.post(REFRESH_URL, payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
+    def test_logout_throttles_after_too_many_attempts(self):
+        # DEFAULT_THROTTLE_RATES["logout"] = "30/min"
+        payload = {"refresh": "not-a-real-token"}
+        for _ in range(30):
+            response = self.client.post(LOGOUT_URL, payload, format="json")
+            self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        response = self.client.post(LOGOUT_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
 
 class AuthLoggingTests(TestCase):
     """
@@ -193,3 +204,212 @@ class AuthLoggingTests(TestCase):
         self._assert_no_pii_leaked(
             captured.output, forbidden_values=[email, payload["password"]]
         )
+
+    def test_logout_success_logs_event_without_pii(self):
+        email = "logging-logout-ok@example.com"
+        password = "super-secret-123"
+        User.objects.create_user(
+            email=email, first_name="Ana", last_name="Silva", password=password
+        )
+        login_response = self.client.post(
+            LOGIN_URL, {"email": email, "password": password}, format="json"
+        )
+        refresh_token = login_response.data["refresh"]
+
+        with self.assertLogs("apps.accounts.views.logout", level="INFO") as captured:
+            response = self.client.post(LOGOUT_URL, {"refresh": refresh_token}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("auth.logout.success", captured.output[0])
+        self._assert_no_pii_leaked(
+            captured.output, forbidden_values=[email, password, refresh_token]
+        )
+
+    def test_logout_failure_logs_event_without_pii(self):
+        with self.assertLogs("apps.accounts.views.logout", level="WARNING") as captured:
+            response = self.client.post(
+                LOGOUT_URL, {"refresh": "not-a-real-token"}, format="json"
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn("auth.logout.failure", captured.output[0])
+        self._assert_no_pii_leaked(captured.output, forbidden_values=["not-a-real-token"])
+
+
+class RegisterEmailEnumerationTests(TestCase):
+    """
+    Etapa 8 — Fase C: a mensagem de e-mail duplicado não confirma mais a
+    existência da conta no texto. Mitigação parcial e deliberada — ver
+    comentário em RegisterSerializer.validate_email para o porquê o status
+    HTTP em si ainda é um sinal residual, fora do escopo desta etapa.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def test_duplicate_email_message_does_not_confirm_account_exists(self):
+        email = "already-registered@example.com"
+        User.objects.create_user(
+            email=email, first_name="Ana", last_name="Silva", password="super-secret-123"
+        )
+
+        response = self.client.post(
+            REGISTER_URL,
+            {"email": email, "first_name": "Bruno", "last_name": "Costa", "password": "another-secret-456"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        message = response.data["email"][0]
+        self.assertNotIn("cadastrado", message.lower())
+        self.assertNotIn("existe", message.lower())
+
+    def test_normal_registration_still_returns_201(self):
+        response = self.client.post(
+            REGISTER_URL,
+            {"email": "brand-new@example.com", "first_name": "Ana", "last_name": "Silva", "password": "super-secret-123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+
+class RegisterPasswordValidationTests(TestCase):
+    """
+    Etapa 8 — Fase D: AUTH_PASSWORD_VALIDATORS (já configurado em
+    settings.py) agora é de fato executado no registro, via
+    RegisterSerializer.validate().
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def _payload(self, **overrides):
+        payload = {
+            "email": "password-validation@example.com",
+            "first_name": "Ana",
+            "last_name": "Silva",
+            "password": "super-secret-123",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_common_password_is_rejected(self):
+        response = self.client.post(
+            REGISTER_URL, self._payload(password="password123"), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password", response.data)
+
+    def test_entirely_numeric_password_is_rejected(self):
+        response = self.client.post(
+            REGISTER_URL, self._payload(password="19283746"), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password", response.data)
+
+    def test_password_too_similar_to_email_is_rejected(self):
+        response = self.client.post(
+            REGISTER_URL,
+            self._payload(email="carlossilva2026@example.com", password="carlossilva2026"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password", response.data)
+
+    def test_a_reasonable_password_still_passes(self):
+        response = self.client.post(
+            REGISTER_URL, self._payload(password="super-secret-123"), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+
+class LogoutTests(TestCase):
+    """
+    Etapa 8 — Fase B: logout revoga de verdade o refresh token (blacklist),
+    e a rotação (Etapa 8 — Fase A, BLACKLIST_AFTER_ROTATION) impede que um
+    refresh token pré-rotação continue utilizável.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def _register_and_login(self, email="logout-user@example.com", password="super-secret-123"):
+        User.objects.create_user(
+            email=email, first_name="Ana", last_name="Silva", password=password
+        )
+        response = self.client.post(
+            LOGIN_URL, {"email": email, "password": password}, format="json"
+        )
+        return response.data["access"], response.data["refresh"]
+
+    def test_logout_returns_200_for_a_valid_refresh_token(self):
+        _, refresh = self._register_and_login()
+        response = self.client.post(LOGOUT_URL, {"refresh": refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_refresh_token_is_rejected_after_logout(self):
+        _, refresh = self._register_and_login()
+
+        self.client.post(LOGOUT_URL, {"refresh": refresh}, format="json")
+
+        response = self.client.post(REFRESH_URL, {"refresh": refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_access_token_still_works_after_logout(self):
+        # Comportamento documentado do SimpleJWT: logout blacklista só o
+        # refresh token. O access token em uso continua válido até expirar
+        # naturalmente — este teste prova exatamente isso, não é uma
+        # limitação a corrigir.
+        access, refresh = self._register_and_login()
+        self.client.post(LOGOUT_URL, {"refresh": refresh}, format="json")
+
+        authed_client = APIClient()
+        authed_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        response = authed_client.get("/api/experiences/drafts/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_logout_without_a_refresh_token_returns_400(self):
+        response = self.client.post(LOGOUT_URL, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_logout_with_an_invalid_token_returns_401(self):
+        response = self.client.post(
+            LOGOUT_URL, {"refresh": "not-a-real-token"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_pre_rotation_refresh_token_is_rejected_after_rotation(self):
+        # Etapa 8 — Fase A: BLACKLIST_AFTER_ROTATION=True fecha exatamente
+        # este gap — sem ele, o token abaixo continuaria válido por até 7
+        # dias mesmo após a rotação legítima.
+        _, original_refresh = self._register_and_login()
+
+        rotate_response = self.client.post(
+            REFRESH_URL, {"refresh": original_refresh}, format="json"
+        )
+        self.assertEqual(rotate_response.status_code, status.HTTP_200_OK)
+        self.assertIn("refresh", rotate_response.data)
+        self.assertNotEqual(rotate_response.data["refresh"], original_refresh)
+
+        reuse_response = self.client.post(
+            REFRESH_URL, {"refresh": original_refresh}, format="json"
+        )
+        self.assertEqual(reuse_response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_new_refresh_token_from_rotation_still_works(self):
+        # Regressão: a correção do gap acima não pode quebrar o uso normal
+        # do token novo emitido pela própria rotação.
+        _, original_refresh = self._register_and_login()
+
+        rotate_response = self.client.post(
+            REFRESH_URL, {"refresh": original_refresh}, format="json"
+        )
+        new_refresh = rotate_response.data["refresh"]
+
+        second_rotation = self.client.post(
+            REFRESH_URL, {"refresh": new_refresh}, format="json"
+        )
+        self.assertEqual(second_rotation.status_code, status.HTTP_200_OK)

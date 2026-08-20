@@ -65,6 +65,11 @@ INSTALLED_APPS = [
     "apps.experiences",
     "apps.payments",
     "rest_framework",
+    # Etapa 8: já é submódulo do djangorestframework-simplejwt já instalado
+    # (nenhuma dependência nova) — dá a LogoutView um lugar real para
+    # registrar o refresh token como revogado. Só rastreia refresh tokens;
+    # um access token em uso continua válido até expirar naturalmente.
+    "rest_framework_simplejwt.token_blacklist",
 ]
 
 MIDDLEWARE = [
@@ -191,6 +196,11 @@ REST_FRAMEWORK = {
         "login": "10/min",
         "register": "10/hour",
         "token_refresh": "30/min",
+        # Logout exige um access token válido já em mãos (sem valor de
+        # brute-force/enumeração) — este limite é só defesa-em-profundidade
+        # contra um cliente com bug em retry-loop, não um requisito de
+        # segurança forte como os três acima.
+        "logout": "30/min",
     },
 }
 
@@ -199,6 +209,12 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
+    # Etapa 8: sem isto, um refresh token usado numa rotação continuava
+    # criptograficamente válido pelos 7 dias restantes mesmo depois do
+    # cliente legítimo já ter avançado para o próximo — um refresh token
+    # antigo vazado podia ser reutilizado. Requer
+    # rest_framework_simplejwt.token_blacklist em INSTALLED_APPS (acima).
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 
