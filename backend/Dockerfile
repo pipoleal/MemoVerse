@@ -18,9 +18,17 @@ RUN pip install --no-cache-dir -r requirements/production.txt
 COPY app/ /app/
 
 # Baked in at build time; WhiteNoise serves these directly from the app
-# process. Uses only the safe defaults already in settings.py, so no real
-# secrets or DATABASE_URL are required for the build to succeed.
-RUN python manage.py collectstatic --noinput
+# process. No real DATABASE_URL is required for collectstatic to succeed.
+# DEBUG/SECRET_KEY here are scoped to this single RUN instruction only (not
+# ENV, so they never persist into the image or the running container) —
+# collectstatic just needs Django to boot, not real secrets. Since the
+# fail-closed settings.py change, DEBUG defaults to False and SECRET_KEY
+# has no fallback in that mode, so building without these two would fail
+# with "SECRET_KEY not found" even though this step never touches anything
+# sensitive. Render's real runtime env (DEBUG=False, real SECRET_KEY) is
+# injected fresh into the container at start, completely unaffected by this.
+RUN DEBUG=True SECRET_KEY=build-time-only-collectstatic-placeholder \
+    python manage.py collectstatic --noinput
 
 EXPOSE 8000
 
