@@ -261,6 +261,61 @@ PENDING_MEDIA_EXPIRATION_MINUTES = config(
 )
 
 
+# ==========================
+# Logging
+# ==========================
+#
+# Etapa 6: sem isto, um 500 em produção não vai a lugar estruturado nenhum
+# — só o traceback bruto do gunicorn, sem timestamp/nível/logger legíveis.
+#
+# disable_existing_loggers=False preserva a configuração padrão do Django
+# (ex.: django.server, usado pelo runserver local) — só sobrepomos os
+# loggers listados abaixo, não apagamos os demais.
+#
+# root=WARNING é o que mantém bibliotecas de terceiro-party (boto3,
+# botocore, urllib3, mercadopago) silenciosas por padrão: qualquer logger
+# sem entrada própria aqui herda esse nível, sem precisar listar cada lib.
+#
+# "apps" cobre TODO logger nomeado via logging.getLogger(__name__) dentro
+# de apps/* (ex.: apps.payments.services.checkout_service,
+# apps.accounts.views.login) — um único ponto de configuração, por causa
+# da hierarquia de namespaces do módulo logging do Python.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+    "loggers": {
+        "apps": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # django.request loga toda exceção 5xx não tratada, com traceback
+        # completo (exc_info) — o Formatter acima anexa o traceback
+        # automaticamente sempre que exc_info está presente no record.
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
+
+
 # Mercado Pago
 # Keep these values out of source control.  The application continues to boot
 # without them; MercadoPagoClient only raises if it is actually instantiated

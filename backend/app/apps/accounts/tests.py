@@ -105,3 +105,91 @@ class AuthThrottlingTests(TestCase):
 
         response = self.client.post(REFRESH_URL, payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class AuthLoggingTests(TestCase):
+    """
+    Etapa 6 — Fase D: eventos de login/registro logados sem PII (sem
+    e-mail, senha ou token no log) — a resposta da API não muda.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def _assert_no_pii_leaked(self, log_output, *, forbidden_values):
+        joined = "\n".join(log_output)
+        for value in forbidden_values:
+            self.assertNotIn(value, joined)
+
+    def test_login_success_logs_event_without_pii(self):
+        email = "logging-login-ok@example.com"
+        password = "super-secret-123"
+        User.objects.create_user(
+            email=email, first_name="Ana", last_name="Silva", password=password
+        )
+
+        with self.assertLogs("apps.accounts.views.login", level="INFO") as captured:
+            response = self.client.post(
+                LOGIN_URL, {"email": email, "password": password}, format="json"
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("auth.login.success", captured.output[0])
+        self._assert_no_pii_leaked(
+            captured.output,
+            forbidden_values=[email, password, response.data["access"], response.data["refresh"]],
+        )
+
+    def test_login_failure_logs_event_without_pii(self):
+        email = "logging-login-fail@example.com"
+
+        with self.assertLogs("apps.accounts.views.login", level="WARNING") as captured:
+            response = self.client.post(
+                LOGIN_URL, {"email": email, "password": "wrong-password"}, format="json"
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn("auth.login.failure", captured.output[0])
+        self._assert_no_pii_leaked(
+            captured.output, forbidden_values=[email, "wrong-password"]
+        )
+
+    def test_register_success_logs_event_without_pii(self):
+        email = "logging-register-ok@example.com"
+        payload = {
+            "email": email,
+            "first_name": "Ana",
+            "last_name": "Silva",
+            "password": "super-secret-123",
+        }
+
+        with self.assertLogs("apps.accounts.views.register", level="INFO") as captured:
+            response = self.client.post(REGISTER_URL, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("auth.register.success", captured.output[0])
+        self._assert_no_pii_leaked(
+            captured.output, forbidden_values=[email, payload["password"]]
+        )
+
+    def test_register_failure_logs_event_without_pii(self):
+        email = "logging-register-dup@example.com"
+        User.objects.create_user(
+            email=email, first_name="Ana", last_name="Silva", password="super-secret-123"
+        )
+        payload = {
+            "email": email,
+            "first_name": "Ana",
+            "last_name": "Silva",
+            "password": "another-secret-456",
+        }
+
+        with self.assertLogs("apps.accounts.views.register", level="WARNING") as captured:
+            response = self.client.post(REGISTER_URL, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("auth.register.failure", captured.output[0])
+        self._assert_no_pii_leaked(
+            captured.output, forbidden_values=[email, payload["password"]]
+        )
