@@ -87,7 +87,16 @@ class DraftCheckoutView(APIView):
         response_data = {
             "payment_id": payment.id,
             "status": payment.status,
-            "plan": {"code": payment.plan.code, "name": payment.plan.name},
+            "plan": {
+                "code": payment.plan.code,
+                "name": payment.plan.name,
+                # payment.amount/currency (congelados), não plan.price: é o
+                # valor realmente cobrado nesta tentativa — ver
+                # PlanSummarySerializer.
+                "price": payment.amount,
+                "currency": payment.currency,
+                "features": payment.plan.features,
+            },
             "checkout": _checkout_payload_for(payment),
         }
         return Response(CheckoutResponseSerializer(response_data).data, status=status.HTTP_200_OK)

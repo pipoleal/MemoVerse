@@ -48,8 +48,17 @@ class CheckoutRequestSerializer(serializers.Serializer):
 
 
 class PlanSummarySerializer(serializers.Serializer):
+    """price/currency aqui vêm sempre de Payment.amount/Payment.currency
+    (congelados na criação da tentativa — ver CheckoutService._create_attempt),
+    nunca de Plan.price diretamente: é o valor que será (ou foi) realmente
+    cobrado, o que também cobre corretamente o override temporário de R$1
+    da conta de teste (ver checkout_service.py)."""
+
     code = serializers.CharField()
     name = serializers.CharField()
+    price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    currency = serializers.CharField()
+    features = serializers.DictField()
 
 
 class CheckoutResponseSerializer(serializers.Serializer):

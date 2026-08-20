@@ -4,7 +4,7 @@ from pathlib import PurePath
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.db.models import Max, Prefetch
+from django.db.models import Max, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.text import slugify
@@ -118,14 +118,16 @@ class PublicExperienceView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
-        # slug inexistente E draft existente-mas-não-publicado caem no MESMO
-        # Http404 (a query exige as duas condições ao mesmo tempo) — nunca
-        # diferencia os dois casos, mesmo padrão de "nunca revelar
-        # existência" já usado em get_owned_draft_or_404.
+        # slug inexistente, draft existente-mas-não-publicado E draft
+        # expirado caem todos no MESMO Http404 (a query exige as três
+        # condições de uma vez, dentro da MESMA chamada a
+        # get_object_or_404) — nunca uma mensagem ou status diferente que
+        # denunciasse qual dos três casos aconteceu, mesmo padrão de "nunca
+        # revelar existência" já usado em get_owned_draft_or_404.
         draft = get_object_or_404(
             ExperienceDraft.objects.prefetch_related(
                 Prefetch("media", queryset=Media.objects.filter(upload_status=Media.UploadStatus.UPLOADED))
-            ),
+            ).filter(Q(expires_at__isnull=True) | Q(expires_at__gte=timezone.now())),
             slug=slug,
             status=ExperienceDraft.Status.PUBLISHED,
         )

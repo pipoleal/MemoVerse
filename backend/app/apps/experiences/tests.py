@@ -332,6 +332,105 @@ class PublicationServiceUnitTests(TestCase):
         self.assertLessEqual(published.published_at, after)
 
 
+class PublicationServiceExpiresAtTests(TestCase):
+    """expires_at só é calculado no momento da publicação (nunca antes — ver
+    ExpiresAtNotSetBeforePublicationTests) e depende exclusivamente do Plan
+    do Payment aprovado do draft. Ver
+    PublicationService._compute_expires_at."""
+
+    def test_weekly_plan_expires_seven_days_after_publication(self):
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+        make_payment(draft=draft, plan=Plan.objects.get(code="weekly"), status=Payment.Status.APPROVED)
+
+        published = PublicationService.publish(draft)
+
+        self.assertIsNotNone(published.expires_at)
+        self.assertEqual(published.expires_at, published.published_at + timedelta(days=7))
+
+    def test_lifetime_plan_never_expires(self):
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+        make_payment(draft=draft, plan=Plan.objects.get(code="lifetime"), status=Payment.Status.APPROVED)
+
+        published = PublicationService.publish(draft)
+
+        self.assertIsNone(published.expires_at)
+
+    def test_lifetime_galaxy_plan_never_expires(self):
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+        make_payment(
+            draft=draft, plan=Plan.objects.get(code="lifetime_galaxy"), status=Payment.Status.APPROVED
+        )
+
+        published = PublicationService.publish(draft)
+
+        self.assertIsNone(published.expires_at)
+
+    def test_legacy_essential_plan_never_expires(self):
+        # Planos antigos (essential/stellar) não têm is_lifetime/duration_days
+        # em features — o default seguro (is_lifetime=True) preserva o
+        # comportamento histórico de "nunca expira" para pagamentos já
+        # existentes antes desta feature.
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+        make_payment(draft=draft, plan=Plan.objects.get(code="essential"), status=Payment.Status.APPROVED)
+
+        published = PublicationService.publish(draft)
+
+        self.assertIsNone(published.expires_at)
+
+    def test_republishing_does_not_recompute_expires_at(self):
+        # Mesma filosofia de idempotência já usada para slug/published_at:
+        # publicar de novo um draft já PUBLISHED nunca altera nada.
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+        make_payment(draft=draft, plan=Plan.objects.get(code="weekly"), status=Payment.Status.APPROVED)
+
+        first = PublicationService.publish(draft)
+        original_expires_at = first.expires_at
+
+        second = PublicationService.publish(draft)
+
+        self.assertEqual(second.expires_at, original_expires_at)
+
+    def test_publish_without_any_approved_payment_defaults_to_never_expires(self):
+        # Caso defensivo (não deveria acontecer em produção, ver o warning
+        # em _compute_expires_at): sem Payment aprovado, o fallback seguro é
+        # nunca expirar, nunca levantar erro e travar a publicação.
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+
+        published = PublicationService.publish(draft)
+
+        self.assertIsNone(published.expires_at)
+
+
+class ExpiresAtNotSetBeforePublicationTests(TestCase):
+    """A contagem de expires_at só começa depois de pagamento aprovado E
+    publicação — criar o draft ou iniciar o checkout nunca a inicia."""
+
+    def test_freshly_created_draft_has_no_expires_at(self):
+        user = make_user()
+        draft = make_draft(user)
+        self.assertIsNone(draft.expires_at)
+
+    def test_awaiting_payment_draft_has_no_expires_at(self):
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        make_payment(draft=draft, plan=Plan.objects.get(code="weekly"), status=Payment.Status.PENDING)
+        draft.refresh_from_db()
+        self.assertIsNone(draft.expires_at)
+
+    def test_paid_but_not_yet_published_draft_has_no_expires_at(self):
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAID)
+        make_payment(draft=draft, plan=Plan.objects.get(code="weekly"), status=Payment.Status.APPROVED)
+        draft.refresh_from_db()
+        self.assertIsNone(draft.expires_at)
+
+
 class PresignedReadUrlTests(TestCase):
     """storage.generate_presigned_read_url é infraestrutura pura: não sabe o
     que é Media/ExperienceDraft, não decide autorização. Todas essas
@@ -750,6 +849,62 @@ class PublicExperienceViewTests(TestCase):
                 "music", "media", "published_at",
             },
         )
+
+
+class PublicExperienceViewExpirationTests(TestCase):
+    """Draft.expires_at=None (planos vitalícios, ou publicações antigas de
+    antes desta feature) nunca expira — só um expires_at no passado bloqueia
+    o acesso. Mesmo tratamento de "nunca revelar existência" do resto desta
+    view: expirado vira o mesmíssimo 404 de slug inexistente."""
+
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+
+    def test_draft_with_no_expires_at_is_always_reachable(self):
+        draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="lifetime-slug",
+            published_at=timezone.now(),
+            expires_at=None,
+        )
+        response = self.client.get(public_url(draft.slug))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_draft_with_future_expires_at_is_reachable(self):
+        draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="not-yet-expired-slug",
+            published_at=timezone.now(),
+            expires_at=timezone.now() + timedelta(days=1),
+        )
+        response = self.client.get(public_url(draft.slug))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_draft_with_past_expires_at_returns_404(self):
+        draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="expired-slug",
+            published_at=timezone.now() - timedelta(days=8),
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+        response = self.client.get(public_url(draft.slug))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_expired_response_is_identical_to_nonexistent_slug(self):
+        draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="expired-slug-2",
+            published_at=timezone.now() - timedelta(days=8),
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+        response_expired = self.client.get(public_url(draft.slug))
+        response_nonexistent = self.client.get(public_url("totally-made-up-slug-2"))
+        self.assertEqual(response_expired.status_code, response_nonexistent.status_code)
+        self.assertEqual(response_expired.data, response_nonexistent.data)
 
 
 class DeleteObjectTests(TestCase):

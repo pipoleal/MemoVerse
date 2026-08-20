@@ -117,12 +117,12 @@ class CheckoutOwnershipTests(TestCase):
 
     def test_owner_can_create_checkout_for_own_draft(self):
         with patch_mp_client():
-            response = auth_client(self.owner).post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = auth_client(self.owner).post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_user_cannot_create_checkout_for_other_users_draft(self):
         with patch_mp_client():
-            response = auth_client(self.other_user).post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = auth_client(self.other_user).post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
 
@@ -133,33 +133,33 @@ class CheckoutPlanResolutionTests(TestCase):
         self.draft = make_draft(self.user)
         self.client = auth_client(self.user)
 
-    def test_essential_plan_creates_payment_of_2999(self):
+    def test_weekly_plan_creates_payment_of_1990(self):
         with patch_mp_client():
-            self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("29.99"))
+        self.assertEqual(payment.amount, Decimal("19.90"))
 
-    def test_stellar_plan_creates_payment_of_3999(self):
+    def test_lifetime_galaxy_plan_creates_payment_of_3990(self):
         with patch_mp_client():
-            self.client.post(checkout_url(self.draft.id), {"plan_code": "stellar"})
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("39.99"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_amount_sent_by_client_is_ignored(self):
         with patch_mp_client():
-            self.client.post(checkout_url(self.draft.id), {"plan_code": "stellar", "amount": "0.01"})
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy", "amount": "0.01"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("39.99"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_price_sent_by_client_is_ignored(self):
         with patch_mp_client():
-            self.client.post(checkout_url(self.draft.id), {"plan_code": "stellar", "price": "0.01"})
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy", "price": "0.01"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("39.99"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_currency_sent_by_client_is_ignored(self):
         with patch_mp_client():
-            self.client.post(checkout_url(self.draft.id), {"plan_code": "stellar", "currency": "USD"})
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy", "currency": "USD"})
         payment = Payment.objects.get(draft=self.draft)
         self.assertEqual(payment.currency, "BRL")
 
@@ -167,9 +167,9 @@ class CheckoutPlanResolutionTests(TestCase):
         other_draft = make_draft(self.user)
         with patch_mp_client():
             self.client.post(
-                checkout_url(self.draft.id), {"plan_code": "essential", "draft_id": str(other_draft.id)}
+                checkout_url(self.draft.id), {"plan_code": "weekly", "draft_id": str(other_draft.id)}
             )
-        payment = Payment.objects.get(plan__code="essential")
+        payment = Payment.objects.get(plan__code="weekly")
         self.assertEqual(payment.draft_id, self.draft.id)
         self.assertFalse(Payment.objects.filter(draft=other_draft).exists())
 
@@ -177,7 +177,7 @@ class CheckoutPlanResolutionTests(TestCase):
         with patch_mp_client():
             self.client.post(
                 checkout_url(self.draft.id),
-                {"plan_code": "essential", "external_reference": "hacked-ref"},
+                {"plan_code": "weekly", "external_reference": "hacked-ref"},
             )
         payment = Payment.objects.get(draft=self.draft)
         self.assertNotEqual(payment.external_reference, "hacked-ref")
@@ -187,7 +187,7 @@ class CheckoutPlanResolutionTests(TestCase):
         with patch_mp_client():
             self.client.post(
                 checkout_url(self.draft.id),
-                {"plan_code": "essential", "idempotency_key": "hacked-key"},
+                {"plan_code": "weekly", "idempotency_key": "hacked-key"},
             )
         payment = Payment.objects.get(draft=self.draft)
         self.assertNotEqual(payment.idempotency_key, "hacked-key")
@@ -200,7 +200,7 @@ class CheckoutPlanResolutionTests(TestCase):
         with patch_mp_client():
             self.client.post(
                 checkout_url(self.draft.id),
-                {"plan_code": "essential", "status": "approved"},
+                {"plan_code": "weekly", "status": "approved"},
             )
         payment = Payment.objects.get(draft=self.draft)
         self.assertEqual(payment.status, Payment.Status.ACTION_REQUIRED)
@@ -219,12 +219,133 @@ class CheckoutPlanResolutionTests(TestCase):
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
 
 
+class TempR1TestOverrideTests(TestCase):
+    """CheckoutService._TEMP_R1_TEST_OWNER_EMAIL: override temporário e
+    restrito de cobrança de R$1,00 para uma única conta de teste. Estes
+    testes existem para blindar dois invariantes explicitamente exigidos
+    na Etapa 3 (Planos + Checkout): o override continua funcionando com os
+    3 novos planos comerciais, e ele nunca se amplia para nenhuma outra
+    conta — em nenhum dos 3 planos."""
+
+    TEST_EMAIL = CheckoutService._TEMP_R1_TEST_OWNER_EMAIL
+
+    def test_override_forces_r1_regardless_of_plan_weekly(self):
+        user = make_user(self.TEST_EMAIL)
+        draft = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("1.00"))
+        self.assertEqual(payment.plan.code, "weekly")
+
+    def test_override_forces_r1_regardless_of_plan_lifetime(self):
+        user = make_user(self.TEST_EMAIL)
+        draft = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("1.00"))
+        self.assertEqual(payment.plan.code, "lifetime")
+
+    def test_override_forces_r1_regardless_of_plan_lifetime_galaxy(self):
+        user = make_user(self.TEST_EMAIL)
+        draft = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("1.00"))
+        self.assertEqual(payment.plan.code, "lifetime_galaxy")
+
+    def test_override_does_not_apply_to_any_other_account(self):
+        # Regressão explícita contra ampliação do comportamento: qualquer
+        # e-mail diferente do exato e-mail de teste sempre paga o preço real
+        # do plano, mesmo planos de maior valor (mais tentador de "vazar").
+        other_user = make_user("nao-e-a-conta-de-teste@example.com")
+        draft = make_draft(other_user)
+        with patch_mp_client():
+            auth_client(other_user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("39.90"))
+
+    def test_client_cannot_spoof_the_test_email_via_request_body(self):
+        # draft.owner.email vem sempre do usuário autenticado dono do draft
+        # (nunca de um campo do body) — CheckoutRequestSerializer nem
+        # declara nada parecido com "email"/"owner_email", então o DRF
+        # descarta silenciosamente qualquer tentativa.
+        real_user = make_user("outro-usuario@example.com")
+        draft = make_draft(real_user)
+        with patch_mp_client():
+            auth_client(real_user).post(
+                checkout_url(draft.id),
+                {"plan_code": "lifetime", "email": self.TEST_EMAIL, "owner_email": self.TEST_EMAIL},
+            )
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("29.90"))
+
+
+class CheckoutResponsePlanDetailsTests(TestCase):
+    """O response de POST /checkout/ passou a incluir price/currency/features
+    do plano — para a tela "RESUMO DO PEDIDO" do frontend não precisar
+    hardcodar nem recalcular nada. price/currency vêm sempre de
+    Payment.amount/currency (congelados), nunca de Plan.price."""
+
+    def test_response_includes_price_currency_and_features_for_weekly(self):
+        user = make_user()
+        draft = make_draft(user)
+        with patch_mp_client():
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+        # DecimalField serializa como string por padrão no DRF — o contrato
+        # da API é "19.90", não 19.90.
+        self.assertEqual(response.data["plan"]["price"], "19.90")
+        self.assertEqual(response.data["plan"]["currency"], "BRL")
+        self.assertEqual(
+            response.data["plan"]["features"],
+            {"duration_days": 7, "is_lifetime": False, "galaxy_live_enabled": False},
+        )
+
+    def test_response_includes_galaxy_live_enabled_true_for_lifetime_galaxy(self):
+        user = make_user()
+        draft = make_draft(user)
+        with patch_mp_client():
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
+        self.assertEqual(response.data["plan"]["price"], "39.90")
+        self.assertIs(response.data["plan"]["features"]["galaxy_live_enabled"], True)
+
+    def test_response_price_reflects_r1_override_not_the_catalog_price(self):
+        # A tela de resumo tem que mostrar o valor que será cobrado de
+        # verdade (Payment.amount), não o preço de tabela do plano — para a
+        # conta de teste isso é R$1,00 mesmo que o plano escolhido custe
+        # R$39,90. Ver TempR1TestOverrideTests para a cobrança em si.
+        user = make_user(CheckoutService._TEMP_R1_TEST_OWNER_EMAIL)
+        draft = make_draft(user)
+        with patch_mp_client():
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
+        self.assertEqual(response.data["plan"]["price"], "1.00")
+
+    def test_response_price_is_unaffected_by_a_later_plan_price_change(self):
+        user = make_user()
+        draft = make_draft(user)
+        with patch_mp_client():
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime"})
+        self.assertEqual(response.data["plan"]["price"], "29.90")
+
+        plan = Plan.objects.get(code="lifetime")
+        plan.price = Decimal("999.00")
+        plan.save(update_fields=["price"])
+
+        # Retomar o mesmo checkout (mp_order_id já setado -> short-circuit em
+        # start_checkout) tem que continuar reportando o valor congelado.
+        with patch_mp_client():
+            second_response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime"})
+        self.assertEqual(second_response.data["plan"]["price"], "29.90")
+
+
 class CheckoutPaymentLinkageTests(TestCase):
     def test_payment_linked_to_correct_draft_and_owner(self):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get()
         self.assertEqual(payment.draft_id, draft.id)
         self.assertEqual(payment.owner_id, user.id)
@@ -233,16 +354,16 @@ class CheckoutPaymentLinkageTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "stellar"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get()
-        self.assertEqual(payment.amount, Decimal("39.99"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
-        plan = Plan.objects.get(code="stellar")
+        plan = Plan.objects.get(code="lifetime_galaxy")
         plan.price = Decimal("99.99")
         plan.save(update_fields=["price"])
 
         payment.refresh_from_db()
-        self.assertEqual(payment.amount, Decimal("39.99"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
 
 class CheckoutAttemptNumberTests(TestCase):
@@ -250,18 +371,18 @@ class CheckoutAttemptNumberTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.attempt_number, 1)
 
     def test_second_attempt_after_terminal_failure_gets_number_2(self):
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
         make_payment(draft=draft, plan=plan, attempt_number=1, status=Payment.Status.REJECTED)
 
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         self.assertTrue(Payment.objects.filter(draft=draft, attempt_number=2).exists())
         self.assertEqual(Payment.objects.filter(draft=draft).count(), 2)
@@ -271,13 +392,13 @@ class CheckoutActivePaymentReuseTests(TestCase):
     def test_existing_active_payment_is_reused(self):
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
         existing = make_payment(
             draft=draft, plan=plan, attempt_number=1, status=Payment.Status.PENDING, mp_order_id="ORD-EXISTING"
         )
 
         with patch_mp_client():
-            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["payment_id"], str(existing.id))
@@ -289,9 +410,9 @@ class CheckoutActivePaymentReuseTests(TestCase):
         client = auth_client(user)
 
         with patch_mp_client():
-            client.post(checkout_url(draft.id), {"plan_code": "essential"})
-            client.post(checkout_url(draft.id), {"plan_code": "essential"})
-            client.post(checkout_url(draft.id), {"plan_code": "essential"})
+            client.post(checkout_url(draft.id), {"plan_code": "weekly"})
+            client.post(checkout_url(draft.id), {"plan_code": "weekly"})
+            client.post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(
             Payment.objects.filter(draft=draft, status__in=Payment.ACTIVE_STATUSES).count(), 1
@@ -301,15 +422,15 @@ class CheckoutActivePaymentReuseTests(TestCase):
     def test_active_payment_for_different_plan_returns_conflict_and_does_not_alter_it(self):
         user = make_user()
         draft = make_draft(user)
-        essential = Plan.objects.get(code="essential")
-        existing = make_payment(draft=draft, plan=essential, attempt_number=1, status=Payment.Status.PENDING)
+        weekly = Plan.objects.get(code="weekly")
+        existing = make_payment(draft=draft, plan=weekly, attempt_number=1, status=Payment.Status.PENDING)
 
         with patch_mp_client():
-            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "stellar"})
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         existing.refresh_from_db()
-        self.assertEqual(existing.plan.code, "essential")
+        self.assertEqual(existing.plan.code, "weekly")
         self.assertEqual(Payment.objects.filter(draft=draft).count(), 1)
 
 
@@ -325,7 +446,7 @@ class CheckoutConcurrencyTests(TransactionTestCase):
     def test_concurrency_does_not_create_two_active_attempts(self):
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
 
         barrier = threading.Barrier(2)
         errors = []
@@ -386,7 +507,7 @@ class CheckoutReferenceGenerationTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.external_reference, f"memoverse-draft-{draft.id}-attempt-1")
 
@@ -398,7 +519,7 @@ class CheckoutReferenceGenerationTests(TestCase):
 
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
 
         payment = CheckoutService._create_attempt(draft=draft, plan=plan)
 
@@ -413,7 +534,7 @@ class CheckoutReferenceGenerationTests(TestCase):
     def test_idempotency_key_is_generated_by_backend_and_is_stable(self):
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
 
         payment_a = CheckoutService._create_attempt(draft=draft, plan=plan)
         self.assertTrue(payment_a.idempotency_key)
@@ -428,7 +549,7 @@ class CheckoutReferenceGenerationTests(TestCase):
         # plausível — e a chave gerada precisa caber com folga.
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
 
         payment = CheckoutService._create_attempt(draft=draft, plan=plan)
 
@@ -472,12 +593,12 @@ class CheckoutMercadoPagoClientCallTests(TestCase):
         draft = make_draft(user)
 
         with patch_mp_client() as mock_cls:
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "stellar"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
 
         payment = Payment.objects.get(draft=draft)
         mock_cls.return_value.create_order.assert_called_once()
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
-        self.assertEqual(call_kwargs["amount"], Decimal("39.99"))
+        self.assertEqual(call_kwargs["amount"], Decimal("39.90"))
         self.assertEqual(call_kwargs["external_reference"], payment.external_reference)
         self.assertEqual(call_kwargs["idempotency_key"], payment.idempotency_key)
         self.assertEqual(call_kwargs["payer"], {"email": user.email})
@@ -491,7 +612,7 @@ class CheckoutMercadoPagoClientCallTests(TestCase):
 
         with patch_mp_client() as mock_cls:
             mock_cls.return_value.environment = "sandbox"
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         payment = Payment.objects.get(draft=draft)
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
@@ -513,7 +634,7 @@ class CheckoutMercadoPagoClientCallTests(TestCase):
 
         with patch_mp_client() as mock_cls:
             mock_cls.return_value.environment = "production"
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
         self.assertEqual(call_kwargs["payer"], {"email": "real.user@example.com"})
@@ -528,7 +649,7 @@ class SandboxApprovalOptInTests(TestCase):
     def test_sandbox_with_explicit_override_sends_apro_first_name(self):
         user = make_user(email="real.user@example.com")
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
         fake_client = MagicMock()
         fake_client.environment = "sandbox"
         fake_client.create_order.return_value = make_mp_result()
@@ -550,7 +671,7 @@ class SandboxApprovalOptInTests(TestCase):
     def test_production_never_sends_apro_even_if_override_is_passed(self):
         user = make_user(email="real.user@example.com")
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
         fake_client = MagicMock()
         fake_client.environment = "production"
         fake_client.create_order.return_value = make_mp_result()
@@ -566,7 +687,7 @@ class SandboxApprovalOptInTests(TestCase):
         # exatamente como antes desta mudança.
         user = make_user(email="real.user@example.com")
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
         fake_client = MagicMock()
         fake_client.environment = "sandbox"
         fake_client.create_order.return_value = make_mp_result()
@@ -583,7 +704,7 @@ class CheckoutOrderPersistenceTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client(order_id="ORD-XYZ"):
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.mp_order_id, "ORD-XYZ")
 
@@ -591,7 +712,7 @@ class CheckoutOrderPersistenceTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client(payment_id="PAY-XYZ"):
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.mp_payment_id, "PAY-XYZ")
 
@@ -599,7 +720,7 @@ class CheckoutOrderPersistenceTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client(payment_id=None, status="processing"):
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=draft)
         self.assertIsNone(payment.mp_payment_id)
 
@@ -609,7 +730,7 @@ class CheckoutDraftStatusTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         draft.refresh_from_db()
         self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
 
@@ -617,7 +738,7 @@ class CheckoutDraftStatusTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         draft.refresh_from_db()
         self.assertNotEqual(draft.status, ExperienceDraft.Status.PAID)
 
@@ -625,7 +746,7 @@ class CheckoutDraftStatusTests(TestCase):
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         draft.refresh_from_db()
         self.assertNotEqual(draft.status, ExperienceDraft.Status.PUBLISHED)
 
@@ -670,7 +791,7 @@ def patch_mp_client_for_card(**create_order_kwargs):
 
 def card_payload(**overrides):
     payload = {
-        "plan_code": "essential",
+        "plan_code": "weekly",
         "payment_method": "card",
         "token": "card-token-123",
         "payment_method_id": "master",
@@ -691,7 +812,7 @@ class CheckoutCardValidationTests(TestCase):
     def test_pix_still_works_without_payment_method_field(self):
         # Item A: nenhum campo novo é obrigatório para o fluxo Pix existente.
         with patch_mp_client():
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         payment = Payment.objects.get(draft=self.draft)
         self.assertEqual(payment.last_sync_payload["transactions"]["payments"][0]["payment_method"]["id"], "pix")
@@ -793,12 +914,12 @@ class CheckoutCardPayloadTests(TestCase):
         with patch_mp_client_for_card() as mock_cls:
             self.client.post(
                 checkout_url(self.draft.id),
-                card_payload(plan_code="stellar", transaction_amount="0.01"),
+                card_payload(plan_code="lifetime_galaxy", transaction_amount="0.01"),
             )
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("39.99"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
-        self.assertEqual(call_kwargs["payments"][0]["amount"], "39.99")
+        self.assertEqual(call_kwargs["payments"][0]["amount"], "39.90")
 
     def test_card_number_or_cvv_like_fields_are_never_accepted(self):
         # O serializer não declara esses campos — mesmo se enviados, o DRF
@@ -871,7 +992,7 @@ class CheckoutMissingConfigurationTests(TestCase):
             "apps.payments.services.checkout_service.MercadoPagoClient",
             side_effect=MercadoPagoConfigurationError("MP_ACCESS_TOKEN não configurado."),
         ):
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         payment = Payment.objects.get(draft=self.draft)
         self.assertIsNone(payment.mp_order_id)
@@ -924,7 +1045,7 @@ class CheckoutToPublishIntegrationTests(TestCase):
         # Pix não aprova sincronamente (action_required) — o comportamento
         # anterior à correção permanece para este método de pagamento.
         with patch_mp_client():
-            checkout_response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            checkout_response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(checkout_response.status_code, status.HTTP_200_OK)
 
         self.draft.refresh_from_db()
@@ -946,7 +1067,7 @@ class CheckoutResponsePaymentMethodTypeTests(TestCase):
 
     def test_pix_response_reports_bank_transfer_type(self):
         with patch_mp_client():
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.data["checkout"]["payment_method_type"], "bank_transfer")
 
     def test_card_response_reports_credit_card_type(self):
@@ -961,7 +1082,7 @@ class CheckoutFailureHandlingTests(TestCase):
         draft = make_draft(user)
 
         with patch_mp_client(raise_error=True):
-            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         draft.refresh_from_db()
@@ -974,7 +1095,7 @@ class CheckoutFailureHandlingTests(TestCase):
         draft = make_draft(user)
 
         with patch_mp_client(raise_error=True):
-            auth_client(user).post(checkout_url(draft.id), {"plan_code": "essential"})
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.status, Payment.Status.PENDING)
@@ -986,13 +1107,13 @@ class CheckoutFailureHandlingTests(TestCase):
         client = auth_client(user)
 
         with patch_mp_client(raise_error=True):
-            first_response = client.post(checkout_url(draft.id), {"plan_code": "essential"})
+            first_response = client.post(checkout_url(draft.id), {"plan_code": "weekly"})
         self.assertEqual(first_response.status_code, status.HTTP_502_BAD_GATEWAY)
 
         failed_payment = Payment.objects.get(draft=draft)
 
         with patch_mp_client() as mock_cls:
-            second_response = client.post(checkout_url(draft.id), {"plan_code": "essential"})
+            second_response = client.post(checkout_url(draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(second_response.status_code, status.HTTP_200_OK)
         self.assertEqual(Payment.objects.filter(draft=draft).count(), 1)
@@ -1016,13 +1137,13 @@ class CheckoutAlreadyPaidTests(TestCase):
     def setUp(self):
         self.user = make_user()
         self.draft = make_draft(self.user)
-        self.plan = Plan.objects.get(code="essential")
+        self.plan = Plan.objects.get(code="weekly")
         self.client = auth_client(self.user)
 
     def test_new_draft_allows_checkout(self):
         # Caso base: nada muda para um draft que nunca foi pago.
         with patch_mp_client():
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
 
@@ -1035,7 +1156,7 @@ class CheckoutAlreadyPaidTests(TestCase):
             status=Payment.Status.PENDING, mp_order_id="ORD-PENDING",
         )
         with patch_mp_client():
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["payment_id"], str(existing.id))
         self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
@@ -1046,7 +1167,7 @@ class CheckoutAlreadyPaidTests(TestCase):
             status=Payment.Status.ACTION_REQUIRED, mp_order_id="ORD-ACTION-REQUIRED",
         )
         with patch_mp_client():
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["payment_id"], str(existing.id))
         self.assertEqual(Payment.objects.filter(draft=self.draft).count(), 1)
@@ -1060,7 +1181,7 @@ class CheckoutAlreadyPaidTests(TestCase):
         self.draft.save(update_fields=["status"])
 
         with patch_mp_client() as mock_cls:
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         # Nenhum segundo Payment foi criado, e a Mercado Pago nunca foi chamada.
@@ -1075,7 +1196,7 @@ class CheckoutAlreadyPaidTests(TestCase):
         self.draft.save(update_fields=["status"])
 
         with patch_mp_client() as mock_cls:
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
@@ -1087,7 +1208,7 @@ class CheckoutAlreadyPaidTests(TestCase):
         self.draft.save(update_fields=["status", "slug"])
 
         with patch_mp_client() as mock_cls:
-            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
@@ -1100,7 +1221,7 @@ class CheckoutAlreadyPaidTests(TestCase):
         self.draft.save(update_fields=["status"])
 
         with patch_mp_client() as mock_cls:
-            self.client.post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
 
         mock_cls.assert_not_called()
 
@@ -1112,7 +1233,7 @@ class CheckoutAlreadyPaidTests(TestCase):
         self.draft.save(update_fields=["status"])
 
         with patch_mp_client():
-            response = auth_client(other_user).post(checkout_url(self.draft.id), {"plan_code": "essential"})
+            response = auth_client(other_user).post(checkout_url(self.draft.id), {"plan_code": "weekly"})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
@@ -1141,7 +1262,7 @@ class CheckoutAlreadyPaidConcurrencyTests(TransactionTestCase):
     def test_concurrent_checkout_attempts_on_paid_draft_are_both_rejected(self):
         user = make_user()
         draft = make_draft(user)
-        plan = Plan.objects.get(code="essential")
+        plan = Plan.objects.get(code="weekly")
         draft.status = ExperienceDraft.Status.PAID
         draft.save(update_fields=["status"])
 

@@ -27,6 +27,13 @@ class ExperienceDraft(models.Model):
     # múltiplos NULL no Postgres, então isso não exige constraint condicional.
     slug = models.CharField(max_length=32, unique=True, null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
+    # Só é calculado e gravado no momento da publicação (nunca antes — criar
+    # o draft ou iniciar o checkout não inicia a contagem), a partir da
+    # duração do Plan pago — ver
+    # apps.experiences.services.publication_service.PublicationService.
+    # None para planos vitalícios (nunca expira) e para publicações antigas
+    # feitas antes desta feature existir.
+    expires_at = models.DateTimeField(null=True, blank=True)
     experience_type = models.CharField(max_length=100, blank=True)
     theme = models.CharField(max_length=100, blank=True)
     title = models.CharField(max_length=200, blank=True)

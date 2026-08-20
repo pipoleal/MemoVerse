@@ -6,46 +6,62 @@ import CardPaymentBlock from "./CardPaymentBlock";
 import {
   createOrResumeCheckout,
   extractCheckoutErrorMessage,
+  fetchActivePlans,
   fetchDraftPaymentStatus,
+  formatPlanPrice,
   getActiveConflictPlanCode,
   FAILED_PAYMENT_STATUSES,
   type CardCheckoutData,
   type CheckoutResponse,
   type PaymentMethodChoice,
   type PaymentStatus,
+  type Plan,
 } from "@/lib/checkout";
 import { extractPublishErrorMessage, publishDraft } from "@/lib/publish";
-
-// No plan-selection UI exists anywhere in the product yet (confirmed: no
-// `plan` field on the wizard's Experience type, no plan picker component).
-// "essential" is the one active Plan.code the backend already accepts for
-// this exact endpoint — see apps/payments/migrations/0002_seed_initial_plans.py.
-// This is a placeholder until a real plan-selection step exists.
-const DEFAULT_PLAN_CODE = "essential";
-
-// Same placeholder debt as DEFAULT_PLAN_CODE above: no plans endpoint exists
-// yet for the frontend to read a real price from. The Card Payment Brick
-// requires a numeric `initialization.amount` purely to render its own
-// installment/fee simulator — this value is NEVER sent to the backend as
-// the charge amount and is NEVER trusted by it either way (Payment.amount is
-// always frozen server-side from Plan.price — see
-// CheckoutService._create_attempt). Matches the "essential" plan's price
-// from apps/payments/migrations/0002_seed_initial_plans.py.
-const DEFAULT_PLAN_DISPLAY_AMOUNT = 29.99;
 
 const POLL_INTERVAL_MS = 5000;
 
 type Phase =
   | { kind: "loading" }
-  // No payment exists yet for this draft: the user must actively choose Pix
-  // or Cartão before any Payment/Order is created — see startCheckout, only
-  // ever called from here after an explicit choice.
-  | { kind: "selecting_method" }
+  // No payment exists yet for this draft: the user must actively choose a
+  // plan (fetched from GET /payments/plans/ — never hardcoded) before
+  // anything else can happen.
+  | { kind: "selecting_plan"; plans: Plan[] }
+  // Plan chosen, but no Payment/Order created yet — still needs Pix or
+  // Cartão before startCheckout is ever called (only ever called from here
+  // after an explicit choice).
+  | { kind: "selecting_method"; plan: Plan }
   | { kind: "creating"; method: PaymentMethodChoice }
   | { kind: "awaiting_payment"; checkout: CheckoutResponse; method: PaymentMethodChoice }
   | { kind: "approved"; checkout: CheckoutResponse | null }
-  | { kind: "payment_failed"; status: PaymentStatus; checkout: CheckoutResponse | null }
+  // planCode always carried separately from checkout (which can be null —
+  // e.g. an already-expired Pix discovered on page load, before any local
+  // checkout call happened this session) so a retry can always resolve the
+  // plan to offer again, even without a full Plan object in hand.
+  | { kind: "payment_failed"; status: PaymentStatus; checkout: CheckoutResponse | null; planCode: string }
   | { kind: "error"; message: string };
+
+// "MemoVerse 1 Semana" -> "1 SEMANA" — a live transform of the real plan
+// name from the API, never a separate hardcoded title per plan_code (which
+// could silently drift from the backend's Plan.name).
+function planCardTitle(name: string): string {
+  return name.replace(/^MemoVerse\s+/i, "").toUpperCase();
+}
+
+function planDurationLabel(plan: Plan): string {
+  const base = plan.features.is_lifetime
+    ? "Sua experiência para sempre"
+    : `Sua experiência disponível por ${plan.features.duration_days} dias`;
+  return plan.features.galaxy_live_enabled ? `${base} + Galáxia Viva` : base;
+}
+
+// Reused wherever the currently-selected/checked-out plan needs to be
+// summarized — never re-derived or hardcoded a second time.
+function currentPlanForSummary(phase: Phase): Plan | null {
+  if (phase.kind === "selecting_method") return phase.plan;
+  if ("checkout" in phase && phase.checkout) return phase.checkout.plan;
+  return null;
+}
 
 function statusLabel(status: PaymentStatus): string {
   switch (status) {
@@ -115,9 +131,28 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
     if (result.status === "approved") {
       setPhase({ kind: "approved", checkout: result });
     } else if (FAILED_PAYMENT_STATUSES.includes(result.status)) {
-      setPhase({ kind: "payment_failed", status: result.status, checkout: result });
+      setPhase({ kind: "payment_failed", status: result.status, checkout: result, planCode: result.plan.code });
     } else {
       setPhase({ kind: "awaiting_payment", checkout: result, method });
+    }
+  }
+
+  // "Tentar novamente" after a failure never assumes the previously chosen
+  // plan is still active (rare, but the catalog can change) — always
+  // re-resolves it from the current catalog, falling back to full plan
+  // selection if it's gone.
+  async function retryAfterFailure(planCode: string) {
+    setPhase({ kind: "loading" });
+    try {
+      const plans = await fetchActivePlans();
+      if (plans.length === 0) {
+        setPhase({ kind: "error", message: "Nenhum plano disponível no momento. Tente novamente em instantes." });
+        return;
+      }
+      const plan = plans.find((candidate) => candidate.code === planCode);
+      setPhase(plan ? { kind: "selecting_method", plan } : { kind: "selecting_plan", plans });
+    } catch (error) {
+      setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
     }
   }
 
@@ -128,9 +163,21 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
       const data = await fetchDraftPaymentStatus(draftId);
 
       if (!data.payment) {
-        // Nothing started yet: let the user choose Pix or Cartão instead of
-        // silently generating a Pix order, as the flow used to do.
-        setPhase({ kind: "selecting_method" });
+        // Nothing started yet: needs the real plan catalog before the user
+        // can choose anything — only fetched here, never when resuming an
+        // already-chosen plan below (that path doesn't need it).
+        let plans: Plan[];
+        try {
+          plans = await fetchActivePlans();
+        } catch (error) {
+          setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
+          return;
+        }
+        if (plans.length === 0) {
+          setPhase({ kind: "error", message: "Nenhum plano disponível no momento. Tente novamente em instantes." });
+          return;
+        }
+        setPhase({ kind: "selecting_plan", plans });
         return;
       }
 
@@ -140,7 +187,12 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
       }
 
       if (FAILED_PAYMENT_STATUSES.includes(data.payment.status)) {
-        setPhase({ kind: "payment_failed", status: data.payment.status, checkout: null });
+        setPhase({
+          kind: "payment_failed",
+          status: data.payment.status,
+          checkout: null,
+          planCode: data.payment.plan.code,
+        });
         return;
       }
 
@@ -192,7 +244,12 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
         } else if (FAILED_PAYMENT_STATUSES.includes(paymentStatus)) {
           setPhase((current) =>
             current.kind === "awaiting_payment"
-              ? { kind: "payment_failed", status: paymentStatus, checkout: current.checkout }
+              ? {
+                  kind: "payment_failed",
+                  status: paymentStatus,
+                  checkout: current.checkout,
+                  planCode: current.checkout.plan.code,
+                }
               : current
           );
         }
@@ -228,19 +285,24 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
         </p>
         <h1 className="mt-3 text-center text-3xl font-black">Finalizar pagamento</h1>
 
-        {phase.kind !== "error" && (
+        {phase.kind !== "error" && phase.kind !== "loading" && phase.kind !== "selecting_plan" && (
           <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
-            <PlanSummaryBlock checkout={"checkout" in phase ? phase.checkout : null} />
+            <PlanSummaryBlock plan={currentPlanForSummary(phase)} />
           </div>
         )}
 
         <div className="mt-6">
           {phase.kind === "loading" && <LoadingBlock message="Carregando pagamento..." />}
 
+          {phase.kind === "selecting_plan" && (
+            <PlanSelectionBlock plans={phase.plans} onSelect={(plan) => setPhase({ kind: "selecting_method", plan })} />
+          )}
+
           {phase.kind === "selecting_method" && (
             <MethodSelectionBlock
-              onChoosePix={() => void startCheckout(DEFAULT_PLAN_CODE, "pix")}
-              onSubmitCard={(cardData) => startCheckout(DEFAULT_PLAN_CODE, "card", cardData)}
+              plan={phase.plan}
+              onChoosePix={() => void startCheckout(phase.plan.code, "pix")}
+              onSubmitCard={(cardData) => startCheckout(phase.plan.code, "card", cardData)}
             />
           )}
 
@@ -267,7 +329,7 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
           {phase.kind === "payment_failed" && (
             <FailedBlock
               status={phase.status}
-              onRetry={() => setPhase({ kind: "selecting_method" })}
+              onRetry={() => void retryAfterFailure(phase.planCode)}
             />
           )}
 
@@ -280,8 +342,8 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
   );
 }
 
-function PlanSummaryBlock({ checkout }: { checkout: CheckoutResponse | null }) {
-  if (!checkout) {
+function PlanSummaryBlock({ plan }: { plan: Plan | null }) {
+  if (!plan) {
     return (
       <div>
         <p className="text-sm uppercase tracking-widest text-slate-400">Plano</p>
@@ -293,18 +355,59 @@ function PlanSummaryBlock({ checkout }: { checkout: CheckoutResponse | null }) {
   return (
     <div>
       <p className="text-sm uppercase tracking-widest text-slate-400">Plano</p>
-      <p className="mt-1 text-xl font-bold text-white">{checkout.plan.name}</p>
-      {/* The backend never returns a price for this endpoint today (only
-          plan code/name) — showing a number here would mean inventing data
-          not backed by any API response, so it is intentionally omitted. */}
+      <p className="mt-1 text-xl font-bold text-white">{plan.name}</p>
+      <p className="mt-4 text-sm uppercase tracking-widest text-slate-400">Total</p>
+      <p className="text-2xl font-bold text-yellow-400">{formatPlanPrice(plan.price, plan.currency)}</p>
+    </div>
+  );
+}
+
+function PlanSelectionBlock({ plans, onSelect }: { plans: Plan[]; onSelect: (plan: Plan) => void }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {plans.map((plan) => (
+        <PlanCard key={plan.code} plan={plan} onSelect={() => onSelect(plan)} />
+      ))}
+    </div>
+  );
+}
+
+function PlanCard({ plan, onSelect }: { plan: Plan; onSelect: () => void }) {
+  const isGalaxy = plan.features.galaxy_live_enabled;
+
+  return (
+    <div
+      className={`flex flex-col items-center gap-3 rounded-3xl border p-6 text-center backdrop-blur-xl transition-all duration-300 ${
+        isGalaxy
+          ? "border-yellow-400/40 bg-linear-to-br from-yellow-400/10 via-white/5 to-purple-500/10 hover:border-yellow-400/60 hover:shadow-[0_0_50px_rgba(250,204,21,.18)]"
+          : "border-white/10 bg-white/5 hover:border-yellow-400/30"
+      }`}
+    >
+      {isGalaxy && (
+        <span className="rounded-full bg-yellow-400/15 px-3 py-1 text-xs font-bold tracking-wide text-yellow-300">
+          ✨ PREMIUM
+        </span>
+      )}
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-300">{planCardTitle(plan.name)}</p>
+      <p className="text-3xl font-black text-white">{formatPlanPrice(plan.price, plan.currency)}</p>
+      <p className="text-sm text-slate-300">{planDurationLabel(plan)}</p>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="mt-2 w-full rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-[1.02] active:scale-95"
+      >
+        Escolher
+      </button>
     </div>
   );
 }
 
 function MethodSelectionBlock({
+  plan,
   onChoosePix,
   onSubmitCard,
 }: {
+  plan: Plan;
   onChoosePix: () => void;
   onSubmitCard: (cardData: CardCheckoutData) => Promise<void>;
 }) {
@@ -347,7 +450,7 @@ function MethodSelectionBlock({
       )}
 
       {tab === "card" && (
-        <CardPaymentBlock amount={DEFAULT_PLAN_DISPLAY_AMOUNT} onSubmit={onSubmitCard} />
+        <CardPaymentBlock amount={Number(plan.price)} onSubmit={onSubmitCard} />
       )}
     </div>
   );

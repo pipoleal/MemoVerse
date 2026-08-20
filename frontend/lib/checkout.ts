@@ -2,10 +2,39 @@ import axios from "axios";
 
 import { api } from "./api";
 
+// Minimal plan info — exactly what apps/payments/serializers/status.py
+// still returns (DraftPaymentStatusView never needed price/features: the
+// resume flow always re-POSTs to /checkout/ to get a full Plan).
 export type PlanSummary = {
   code: string;
   name: string;
 };
+
+export type PlanFeatures = {
+  duration_days: number | null;
+  is_lifetime: boolean;
+  galaxy_live_enabled: boolean;
+};
+
+// Full plan info — GET /payments/plans/ and CheckoutResponse.plan both
+// return exactly this shape (apps/payments/serializers/plans.py and the
+// expanded PlanSummarySerializer in serializers/checkout.py).
+export type Plan = {
+  code: string;
+  name: string;
+  // DRF serializes DecimalField as a string by default (avoids float
+  // rounding) — always Number(plan.price) before formatting or passing it
+  // anywhere numeric (e.g. CardPaymentBlock's `amount` prop).
+  price: string;
+  currency: string;
+  features: PlanFeatures;
+};
+
+// Single source of price-formatting logic — never format a plan price
+// anywhere else, to avoid the same value drifting across components.
+export function formatPlanPrice(price: string, currency: string = "BRL"): string {
+  return Number(price).toLocaleString("pt-BR", { style: "currency", currency });
+}
 
 // Exactly the keys apps/payments/views/checkout.py::_checkout_payload_for
 // may include — mp_order_id is always present, the rest only when the
@@ -52,7 +81,7 @@ export const FAILED_PAYMENT_STATUSES: PaymentStatus[] = ["rejected", "cancelled"
 export type CheckoutResponse = {
   payment_id: string;
   status: PaymentStatus;
-  plan: PlanSummary;
+  plan: Plan;
   checkout: CheckoutArtifacts;
 };
 
@@ -70,6 +99,14 @@ export type DraftPaymentStatus = {
 
 export async function fetchDraftPaymentStatus(draftId: string): Promise<DraftPaymentStatus> {
   const response = await api.get<DraftPaymentStatus>(`/payments/drafts/${draftId}/status/`);
+  return response.data;
+}
+
+// GET /payments/plans/ — public (no auth required), only ever returns
+// active/purchasable plans, already ordered by price. The frontend never
+// hardcodes a plan_code or price anywhere; this is the only source.
+export async function fetchActivePlans(): Promise<Plan[]> {
+  const response = await api.get<Plan[]>("/payments/plans/");
   return response.data;
 }
 
