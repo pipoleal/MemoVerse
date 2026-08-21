@@ -448,3 +448,155 @@ class SyncThenWebhookIdempotencyTests(TestCase):
         self.assertEqual(payment.status, Payment.Status.APPROVED)
         self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
         self.assertEqual(draft.updated_at, paid_at_after_webhook)
+
+
+class DraftPaymentFailedTests(TestCase):
+    """Etapa 9A: AWAITING_PAYMENT -> PAYMENT_FAILED quando um Payment chega
+    a um estado terminal desfavorável sem nunca ter sido aprovado."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.plan = Plan.objects.get(code="essential")
+
+    def _confirm(self, payment, mp_status):
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status=mp_status
+        )
+        PaymentConfirmationService.confirm_from_order_id(
+            mp_order_id=payment.mp_order_id, mp_client=fake_client(result)
+        )
+        payment.refresh_from_db()
+        return payment
+
+    def test_rejected_payment_moves_draft_to_payment_failed(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        self._confirm(payment, "failed")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+
+    def test_cancelled_payment_moves_draft_to_payment_failed(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        self._confirm(payment, "canceled")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+
+    def test_expired_payment_moves_draft_to_payment_failed(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.ACTION_REQUIRED)
+        self._confirm(payment, "expired")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+
+    def test_approved_payment_never_becomes_payment_failed(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.ACTION_REQUIRED)
+        self._confirm(payment, "processed")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+
+    def test_pending_payment_keeps_draft_awaiting_payment(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        self._confirm(payment, "created")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+    def test_action_required_payment_keeps_draft_awaiting_payment(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        self._confirm(payment, "action_required")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+    def test_already_payment_failed_draft_is_not_touched_again_idempotent(self):
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=self.plan, status=Payment.Status.PENDING)
+        self._confirm(payment, "failed")
+        draft.refresh_from_db()
+        failed_at = draft.updated_at
+
+        # Segunda notificação (duplicada) reconfirmando o MESMO status —
+        # _next_status mantém o Payment em REJECTED (current == mapped),
+        # não é uma transição nova: não deve haver save() extra no draft.
+        self._confirm(payment, "failed")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+        self.assertEqual(draft.updated_at, failed_at)
+
+    def test_a_paid_draft_is_never_downgraded_to_payment_failed(self):
+        # Payment de uma tentativa diferente do MESMO draft (já aprovada por
+        # outra tentativa) sendo rejeitado não pode reverter o Draft já PAID.
+        draft = make_draft(self.user, status=ExperienceDraft.Status.PAID)
+        payment = make_payment(
+            draft=draft, plan=self.plan, attempt_number=1, status=Payment.Status.PENDING
+        )
+        self._confirm(payment, "failed")
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+
+    def test_stale_rejection_of_an_old_attempt_does_not_override_a_newer_active_checkout(self):
+        # Corrida identificada na revisão da Etapa 9A: attempt #1 já é
+        # REJECTED (o draft já processou essa falha uma vez); attempt #2
+        # existe e está ativo, com o draft de volta em AWAITING_PAYMENT
+        # (mesmo comportamento incondicional de CheckoutService._create_order).
+        # Uma notificação duplicada/atrasada reconfirmando o attempt #1 (já
+        # terminal, sem mudança real de status) NUNCA pode sobrescrever o
+        # AWAITING_PAYMENT que pertence ao attempt #2 em andamento.
+        draft = make_draft(self.user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        old_attempt = make_payment(
+            draft=draft, plan=self.plan, attempt_number=1, status=Payment.Status.REJECTED
+        )
+        make_payment(draft=draft, plan=self.plan, attempt_number=2, status=Payment.Status.ACTION_REQUIRED)
+
+        self._confirm(old_attempt, "failed")
+
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+
+class SyncThenWebhookPaymentFailedIdempotencyTests(TestCase):
+    """Mesmo padrão de SyncThenWebhookIdempotencyTests, mas para o caminho
+    de falha em vez de aprovação — confirma que confirm_from_result (síncrono)
+    e confirm_from_order_id (webhook) convergem para o mesmo resultado."""
+
+    def test_sync_rejection_followed_by_webhook_is_idempotent(self):
+        user = make_user()
+        plan = Plan.objects.get(code="essential")
+        draft = make_draft(user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="failed"
+        )
+
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+        failed_at = draft.updated_at
+
+        payment.refresh_from_db()
+        PaymentConfirmationService.confirm_from_order_id(
+            mp_order_id=payment.mp_order_id, mp_client=fake_client(result)
+        )
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+        self.assertEqual(draft.updated_at, failed_at)
+
+
+class ConfirmFromResultPaymentFailedTests(TestCase):
+    def test_rejected_result_marks_draft_payment_failed(self):
+        user = make_user()
+        plan = Plan.objects.get(code="essential")
+        draft = make_draft(user, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, plan=plan, status=Payment.Status.PENDING)
+        result = make_order_result(
+            order_id=payment.mp_order_id, external_reference=payment.external_reference, status="failed"
+        )
+
+        PaymentConfirmationService.confirm_from_result(payment=payment, result=result)
+
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.REJECTED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)

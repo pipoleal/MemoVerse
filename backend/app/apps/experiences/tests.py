@@ -1145,6 +1145,21 @@ class MediaDeleteViewTests(TestCase):
             self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
             self.assertFalse(Media.objects.filter(id=media.id).exists())
 
+    def test_deleted_media_does_not_reappear_on_draft_resume(self):
+        # Etapa 9A: fecha o loop "mídia removida não reaparece no resume" —
+        # o frontend passou a chamar este DELETE de verdade; aqui provamos
+        # que, uma vez chamado, um GET subsequente do draft (o que o wizard
+        # usa para retomar) já não inclui mais a mídia removida.
+        media = make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
+        client = auth_client(self.owner)
+        with self._patch_r2():
+            delete_response = client.delete(media_delete_url(self.draft.id, media.id))
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+
+        get_response = client.get(draft_detail_url(self.draft.id))
+        media_ids = [item["id"] for item in get_response.data["media"]]
+        self.assertNotIn(str(media.id), media_ids)
+
 
 class MediaCleanupServiceTests(TestCase):
     """services.media_cleanup.cleanup_abandoned_media — ver docstring do

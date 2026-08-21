@@ -1,3 +1,4 @@
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -13,6 +14,7 @@ from ..services.checkout_service import (
     CheckoutGatewayError,
     CheckoutService,
     DraftAlreadyPaid,
+    DraftNotFound,
 )
 
 
@@ -78,6 +80,13 @@ class DraftCheckoutView(APIView):
                 {"detail": "Este draft já foi pago e não pode iniciar um novo checkout."},
                 status=status.HTTP_409_CONFLICT,
             )
+        except DraftNotFound:
+            # O draft existia quando get_object_or_404 rodou, mas foi
+            # apagado (por outra requisição do mesmo dono) antes deste
+            # service travar a linha. Não é um conflito de negócio sobre um
+            # recurso que ainda existe (diferente dos casos acima) — o
+            # recurso não existe mais, mesma resposta de get_object_or_404.
+            raise Http404
         except CheckoutGatewayError:
             return Response(
                 {"detail": "Não foi possível iniciar o pagamento com a Mercado Pago. Tente novamente."},

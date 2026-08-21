@@ -1,11 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 
 import FadeIn from "../../animations/FadeIn";
 import { useExperience, type MediaEntry } from "../context/ExperienceContext";
-import { uploadMediaFile, validateFileForUpload } from "@/lib/mediaUpload";
+import { deleteMediaFile, uploadMediaFile, validateFileForUpload } from "@/lib/mediaUpload";
 
 const MAX_PHOTOS = 10;
 
@@ -20,6 +20,13 @@ export default function PhotosStep() {
   // context state) across step changes — only an explicit "Remover" click
   // aborts a specific upload.
   const abortControllers = useRef<Map<string, AbortController>>(new Map());
+
+  // Entries currently being deleted on the backend (disables their button
+  // and shows "Removendo..."), and the last removal error per entry, if
+  // any. Local to this component — never mixed into MediaEntry/context,
+  // since these are transient UI states of the removal action itself.
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
 
   async function runUpload(entryId: string, file: File) {
     const draftId = await ensureDraftId();
@@ -120,16 +127,61 @@ export default function PhotosStep() {
     void runUpload(entry.id, entry.file);
   }
 
-  function removePhoto(entryId: string) {
-    abortControllers.current.get(entryId)?.abort();
-    abortControllers.current.delete(entryId);
-
+  function discardEntryLocally(entryId: string) {
     setPhotoEntries((current) => {
       const target = current.find((entry) => entry.id === entryId);
       if (target?.previewUrl.startsWith("blob:")) {
         URL.revokeObjectURL(target.previewUrl);
       }
       return current.filter((entry) => entry.id !== entryId);
+    });
+  }
+
+  async function removePhoto(entryId: string) {
+    const entry = photoEntries.find((item) => item.id === entryId);
+    if (!entry) return;
+
+    setRemoveErrors((current) => {
+      if (!(entryId in current)) return current;
+      const next = { ...current };
+      delete next[entryId];
+      return next;
+    });
+
+    if (!entry.mediaId) {
+      // Never persisted on the backend (still local/uploading/error) —
+      // nothing to delete server-side, same as before.
+      abortControllers.current.get(entryId)?.abort();
+      abortControllers.current.delete(entryId);
+      discardEntryLocally(entryId);
+      return;
+    }
+
+    const draftId = await ensureDraftId();
+    if (!draftId) return;
+
+    setDeletingIds((current) => new Set(current).add(entryId));
+
+    try {
+      await deleteMediaFile(draftId, entry.mediaId);
+    } catch (error) {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        next.delete(entryId);
+        return next;
+      });
+      setRemoveErrors((current) => ({
+        ...current,
+        [entryId]: error instanceof Error ? error.message : "Não foi possível remover.",
+      }));
+      return;
+    }
+
+    discardEntryLocally(entryId);
+    setDeletingIds((current) => {
+      const next = new Set(current);
+      next.delete(entryId);
+      return next;
     });
   }
 
@@ -289,6 +341,11 @@ export default function PhotosStep() {
                     {entry.status === "error" && (
                       <p className="text-[11px] text-red-300">{entry.errorMessage}</p>
                     )}
+                    {removeErrors[entry.id] && (
+                      <p className="text-[11px] text-red-300" aria-live="polite">
+                        {removeErrors[entry.id]}
+                      </p>
+                    )}
 
                     <div className="flex items-end justify-between">
                       <span className="text-xs font-medium text-white">
@@ -306,30 +363,27 @@ export default function PhotosStep() {
                           </button>
                         )}
 
-                        {/* Server-loaded entries (resuming a draft) have no
-                            delete endpoint behind this button — offering it
-                            would remove the entry locally while the backend
-                            still counts the photo as attached, a silently
-                            broken action rather than a real one. */}
-                        {!entry.fromServer && (
-                          <button
-                            type="button"
-                            onClick={() => removePhoto(entry.id)}
-                            className="
-                              rounded-full
-                              bg-black/70
-                              px-3
-                              py-2
-                              text-xs
-                              font-semibold
-                              text-white
-                              transition-colors
-                              hover:bg-red-500
-                            "
-                          >
-                            Remover
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => removePhoto(entry.id)}
+                          disabled={deletingIds.has(entry.id)}
+                          className="
+                            rounded-full
+                            bg-black/70
+                            px-3
+                            py-2
+                            text-xs
+                            font-semibold
+                            text-white
+                            transition-colors
+                            hover:bg-red-500
+                            disabled:cursor-not-allowed
+                            disabled:opacity-60
+                            disabled:hover:bg-black/70
+                          "
+                        >
+                          {deletingIds.has(entry.id) ? "Removendo…" : "Remover"}
+                        </button>
                       </div>
                     </div>
                   </div>

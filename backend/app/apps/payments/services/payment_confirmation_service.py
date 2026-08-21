@@ -59,6 +59,17 @@ class PaymentConfirmationService:
     chamada de rede extra) convergem para confirm_from_result — nenhuma das
     duas duplica a lógica de transição de estado."""
 
+    # Status terminais de Payment considerados "falha definitiva" para fins
+    # de refletir isso no Draft (Etapa 9A). Deliberadamente SEM REFUNDED:
+    # _next_status só alcança REFUNDED a partir de current == APPROVED, e
+    # nesse momento o Draft já é PAID/PUBLISHED (invariante documentado em
+    # CheckoutService.DraftAlreadyPaid) — nunca AWAITING_PAYMENT, então
+    # _mark_draft_payment_failed já seria no-op mesmo sem essa exclusão
+    # explícita; deixamos de fora mesmo assim para não depender só do guard.
+    _DRAFT_FAILURE_STATUSES = frozenset(
+        {Payment.Status.REJECTED, Payment.Status.CANCELLED, Payment.Status.EXPIRED}
+    )
+
     @staticmethod
     def confirm_from_order_id(*, mp_order_id: str, mp_client: MercadoPagoClient | None = None) -> Payment:
         try:
@@ -128,6 +139,7 @@ class PaymentConfirmationService:
             payment = Payment.objects.select_for_update().get(pk=payment_id)
 
             mapped_status = map_order_status(result.status)
+            previous_status = payment.status
             next_status = PaymentConfirmationService._next_status(payment.status, mapped_status)
 
             update_fields = ["status", "last_sync_payload", "updated_at"]
@@ -140,6 +152,22 @@ class PaymentConfirmationService:
 
             if next_status == Payment.Status.APPROVED:
                 PaymentConfirmationService._mark_draft_paid(draft)
+            elif (
+                next_status != previous_status
+                and next_status in PaymentConfirmationService._DRAFT_FAILURE_STATUSES
+            ):
+                # next_status != previous_status exige uma transição REAL,
+                # nunca uma reconfirmação idempotente (ex.: notificação
+                # duplicada/atrasada de uma tentativa antiga já terminal).
+                # Sem essa checagem, uma tentativa antiga rejeitada poderia
+                # "vencer" e sobrescrever para PAYMENT_FAILED um draft cujo
+                # AWAITING_PAYMENT atual pertence, na verdade, a uma
+                # tentativa nova e ainda em andamento — a constraint
+                # uniq_active_payment_per_draft só permite essa tentativa
+                # nova existir depois que a antiga já era terminal, então
+                # uma transição de fato NOVA para falha nunca corre contra
+                # uma tentativa mais recente já criada.
+                PaymentConfirmationService._mark_draft_payment_failed(draft)
 
     @staticmethod
     def _next_status(current: str, mapped: str | None) -> str:
@@ -179,4 +207,19 @@ class PaymentConfirmationService:
             return
 
         draft.status = ExperienceDraft.Status.PAID
+        draft.save(update_fields=["status", "updated_at"])
+
+    @staticmethod
+    def _mark_draft_payment_failed(draft: ExperienceDraft) -> None:
+        """Recebe o Draft já travado (select_for_update) por _apply_result.
+
+        Só transiciona a partir de AWAITING_PAYMENT — nunca sobrescreve um
+        Draft já PAID/PUBLISHED (pagamento aprovado por outra tentativa) nem
+        regride um Draft já DRAFT/PAYMENT_FAILED. Idempotente, mesmo padrão
+        de _mark_draft_paid."""
+
+        if draft.status != ExperienceDraft.Status.AWAITING_PAYMENT:
+            return
+
+        draft.status = ExperienceDraft.Status.PAYMENT_FAILED
         draft.save(update_fields=["status", "updated_at"])

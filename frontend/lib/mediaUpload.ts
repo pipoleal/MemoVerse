@@ -122,6 +122,19 @@ async function confirmUploadComplete(draftId: string, mediaId: string): Promise<
   }
 }
 
+// Backend contract (MediaDeleteView): DELETE is idempotent — deleting a
+// media that no longer exists (already removed by a previous click, another
+// tab, or a retried request) returns 404, treated here as "already gone",
+// not as a failure to surface to the user.
+export async function deleteMediaFile(draftId: string, mediaId: string): Promise<void> {
+  try {
+    await api.delete(`/experiences/drafts/${draftId}/media/${mediaId}/`);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) return;
+    throw new Error(extractErrorMessage(error, "Não foi possível remover o arquivo."));
+  }
+}
+
 export async function uploadMediaFile(
   draftId: string,
   mediaType: MediaType,

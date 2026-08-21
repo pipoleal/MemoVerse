@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 
 import FadeIn from "../../animations/FadeIn";
 import { useExperience, type MediaEntry } from "../context/ExperienceContext";
-import { uploadMediaFile, validateFileForUpload } from "@/lib/mediaUpload";
+import { deleteMediaFile, uploadMediaFile, validateFileForUpload } from "@/lib/mediaUpload";
 
 const MAX_VIDEOS = 3;
 
@@ -13,6 +13,10 @@ export default function VideosStep() {
 
   // See PhotosStep for why these are deliberately not aborted on unmount.
   const abortControllers = useRef<Map<string, AbortController>>(new Map());
+
+  // See PhotosStep for why these are local to the component.
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
 
   async function runUpload(entryId: string, file: File) {
     const draftId = await ensureDraftId();
@@ -109,16 +113,60 @@ export default function VideosStep() {
     void runUpload(entry.id, entry.file);
   }
 
-  function removeVideo(entryId: string) {
-    abortControllers.current.get(entryId)?.abort();
-    abortControllers.current.delete(entryId);
-
+  function discardEntryLocally(entryId: string) {
     setVideoEntries((current) => {
       const target = current.find((entry) => entry.id === entryId);
       if (target?.previewUrl.startsWith("blob:")) {
         URL.revokeObjectURL(target.previewUrl);
       }
       return current.filter((entry) => entry.id !== entryId);
+    });
+  }
+
+  // See PhotosStep.removePhoto for the reasoning behind each branch.
+  async function removeVideo(entryId: string) {
+    const entry = videoEntries.find((item) => item.id === entryId);
+    if (!entry) return;
+
+    setRemoveErrors((current) => {
+      if (!(entryId in current)) return current;
+      const next = { ...current };
+      delete next[entryId];
+      return next;
+    });
+
+    if (!entry.mediaId) {
+      abortControllers.current.get(entryId)?.abort();
+      abortControllers.current.delete(entryId);
+      discardEntryLocally(entryId);
+      return;
+    }
+
+    const draftId = await ensureDraftId();
+    if (!draftId) return;
+
+    setDeletingIds((current) => new Set(current).add(entryId));
+
+    try {
+      await deleteMediaFile(draftId, entry.mediaId);
+    } catch (error) {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        next.delete(entryId);
+        return next;
+      });
+      setRemoveErrors((current) => ({
+        ...current,
+        [entryId]: error instanceof Error ? error.message : "Não foi possível remover.",
+      }));
+      return;
+    }
+
+    discardEntryLocally(entryId);
+    setDeletingIds((current) => {
+      const next = new Set(current);
+      next.delete(entryId);
+      return next;
     });
   }
 
@@ -280,6 +328,11 @@ export default function VideosStep() {
                     {entry.status === "error" && (
                       <p className="text-[11px] text-red-300">{entry.errorMessage}</p>
                     )}
+                    {removeErrors[entry.id] && (
+                      <p className="text-[11px] text-red-300" aria-live="polite">
+                        {removeErrors[entry.id]}
+                      </p>
+                    )}
 
                     <div className="flex items-center justify-between gap-4">
                       <span className="text-sm font-medium text-white">
@@ -297,27 +350,27 @@ export default function VideosStep() {
                           </button>
                         )}
 
-                        {/* See PhotosStep for why server-loaded entries
-                            don't get a Remover button. */}
-                        {!entry.fromServer && (
-                          <button
-                            type="button"
-                            onClick={() => removeVideo(entry.id)}
-                            className="
-                              rounded-full
-                              bg-white/10
-                              px-4
-                              py-2
-                              text-xs
-                              font-semibold
-                              text-white
-                              transition-colors
-                              hover:bg-red-500
-                            "
-                          >
-                            Remover
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeVideo(entry.id)}
+                          disabled={deletingIds.has(entry.id)}
+                          className="
+                            rounded-full
+                            bg-white/10
+                            px-4
+                            py-2
+                            text-xs
+                            font-semibold
+                            text-white
+                            transition-colors
+                            hover:bg-red-500
+                            disabled:cursor-not-allowed
+                            disabled:opacity-60
+                            disabled:hover:bg-white/10
+                          "
+                        >
+                          {deletingIds.has(entry.id) ? "Removendo…" : "Remover"}
+                        </button>
                       </div>
                     </div>
                   </div>

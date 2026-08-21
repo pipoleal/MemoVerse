@@ -39,11 +39,10 @@ export interface MediaEntry {
   mediaId?: string;
   errorMessage?: string;
   // True for entries loaded from the server when resuming an existing
-  // draft. Steps use this to hide the "Remover" action for them — there is
-  // no delete endpoint for already-uploaded media (out of scope for this
-  // fix), so offering a button that only removes the entry locally, while
-  // the backend still counts it toward the published experience, would be
-  // a silently broken action rather than a real one.
+  // draft, as opposed to uploaded during this wizard session. Etapa 9A:
+  // no longer controls whether "Remover" is offered (removal now always
+  // persists via deleteMediaFile, for both cases) — kept as provenance
+  // metadata (id-based mediaId alone doesn't distinguish the two).
   fromServer?: boolean;
 }
 

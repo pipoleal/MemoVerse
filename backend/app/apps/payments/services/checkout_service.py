@@ -82,6 +82,19 @@ class CheckoutGatewayError(CheckoutError):
         super().__init__(f"Falha ao criar a Order na Mercado Pago para o Payment {payment.id}.")
 
 
+class DraftNotFound(CheckoutError):
+    """O draft não existe mais no banco no momento em que este service trava
+    a linha — provavelmente apagado (DraftDeletionService) por outra
+    requisição do mesmo dono entre a view resolver o objeto e esta
+    transação começar. Diferente dos outros CheckoutError: aqui não há
+    conflito de negócio sobre um recurso existente, o recurso simplesmente
+    não existe mais — resposta 404, mesmo padrão de get_object_or_404."""
+
+    def __init__(self, draft_id):
+        self.draft_id = draft_id
+        super().__init__(f"O draft {draft_id} não existe mais.")
+
+
 class DraftAlreadyPaid(CheckoutError):
     """O draft já foi pago (ou publicado) — nenhuma nova tentativa de
     checkout é permitida, mesmo que o Payment aprovado seja um estado
@@ -162,7 +175,19 @@ class CheckoutService:
                 # simultâneas num draft já PAID nunca correm essa checagem em
                 # paralelo — a segunda só lê o status depois que a primeira já
                 # liberou o lock (commit/rollback), nunca antes.
-                locked_draft = ExperienceDraft.objects.select_for_update().get(pk=draft.pk)
+                #
+                # DoesNotExist aqui é só tradução de exceção para o domínio de
+                # checkout (DraftNotFound), não proteção contra o `except
+                # IntegrityError` logo abaixo — DoesNotExist e IntegrityError
+                # não têm relação de herança, um nunca capturaria o outro de
+                # qualquer forma. Cenário real: a view já resolveu `draft` via
+                # get_object_or_404, mas outra requisição do mesmo dono
+                # apagou essa linha (DraftDeletionService) entre esse momento
+                # e este select_for_update.
+                try:
+                    locked_draft = ExperienceDraft.objects.select_for_update().get(pk=draft.pk)
+                except ExperienceDraft.DoesNotExist as exc:
+                    raise DraftNotFound(draft.pk) from exc
 
                 if locked_draft.status in (ExperienceDraft.Status.PAID, ExperienceDraft.Status.PUBLISHED):
                     # Levanta ANTES de qualquer leitura/escrita de Payment e antes

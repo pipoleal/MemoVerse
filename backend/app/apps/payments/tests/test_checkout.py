@@ -13,7 +13,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.experiences.models import ExperienceDraft
 
 from ..models import Payment, Plan
-from ..services.checkout_service import CheckoutService, DraftAlreadyPaid, _payer_email_for
+from ..services.checkout_service import CheckoutService, DraftAlreadyPaid, DraftNotFound, _payer_email_for
 from ..services.mercadopago_client import (
     MercadoPagoConfigurationError,
     MercadoPagoGatewayError,
@@ -1278,3 +1278,42 @@ class CheckoutAlreadyPaidConcurrencyTests(TransactionTestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(rejections), 2)
         self.assertFalse(Payment.objects.filter(draft=draft).exists())
+
+
+class DraftDeletedDuringCheckoutTests(TestCase):
+    """Etapa 9A: corrige a race condition em que ExperienceDraft.DoesNotExist
+    escapava sem tratamento quando um draft era deletado concorrentemente
+    entre a view resolver o objeto e este service travar a linha
+    (select_for_update). Reprodução determinística, sem threads reais: o
+    objeto `draft` em memória permanece com um `.pk` válido em Python mesmo
+    depois que a linha correspondente é apagada do banco — exatamente o que
+    aconteceria se outra requisição do mesmo dono apagasse o draft nesse
+    intervalo."""
+
+    def test_service_raises_draft_not_found_instead_of_does_not_exist(self):
+        user = make_user()
+        draft = make_draft(user)
+        plan = Plan.objects.get(code="weekly")
+        ExperienceDraft.objects.filter(pk=draft.pk).delete()
+
+        with self.assertRaises(DraftNotFound):
+            CheckoutService.start_checkout(draft=draft, plan=plan)
+
+        self.assertFalse(Payment.objects.filter(draft_id=draft.pk).exists())
+
+    def test_view_returns_404_without_a_raw_traceback(self):
+        # get_object_or_404 é substituído por um mock que devolve o mesmo
+        # objeto `draft` em memória (simulando fielmente "a view já havia
+        # resolvido o objeto antes da linha sumir") — sem esse patch, a
+        # própria get_object_or_404 da view pegaria a ausência primeiro,
+        # via o caminho antigo já existente, e o teste não exercitaria o
+        # tratamento de DraftNotFound que estamos corrigindo agora.
+        user = make_user()
+        draft = make_draft(user)
+        ExperienceDraft.objects.filter(pk=draft.pk).delete()
+
+        with patch("apps.payments.views.checkout.get_object_or_404", return_value=draft):
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(Payment.objects.filter(draft_id=draft.pk).exists())
