@@ -74,14 +74,37 @@ api.interceptors.response.use(
 
         return api(originalRequest);
       } catch (e) {
-        // refresh failed - clear stored tokens and force login
+        // Refresh failed — the stored tokens are dead (expired, malformed,
+        // or belong to a user that no longer exists) and must never be
+        // reused, so always clear them: the next request from any page
+        // goes out with no Authorization header, exactly like a real
+        // anonymous visitor.
         try {
           clearTokens();
         } catch (er) {
           // ignore
         }
 
-        if (typeof window !== "undefined") {
+        // A hard redirect here is a safety net for pages that assume an
+        // authenticated session (dashboard, checkout, admin, resuming an
+        // owned draft) — but /experience/new, /e/[slug] and the landing
+        // page are explicitly meant to work with zero session at all (see
+        // Etapa 10's anonymous draft + claim_token architecture). A leftover
+        // dead token from a previous session must never force-redirect a
+        // visitor away from those, or every request they make (even to
+        // AllowAny endpoints, since JWTAuthentication rejects an invalid
+        // Bearer token before permission_classes is ever consulted) would
+        // hijack them into /login mid-flow. clearTokens() above already
+        // makes the anonymous flow self-heal on its own next request.
+        const isAnonymousTolerantPath =
+          typeof window !== "undefined" &&
+          (window.location.pathname === "/" ||
+            window.location.pathname === "/experience/new" ||
+            window.location.pathname.startsWith("/e/") ||
+            window.location.pathname === "/login" ||
+            window.location.pathname === "/register");
+
+        if (typeof window !== "undefined" && !isAnonymousTolerantPath) {
           window.location.href = "/login";
         }
 
