@@ -105,6 +105,14 @@ class ExperienceDraft(models.Model):
     event_date = models.DateField(null=True, blank=True)
     letter = models.TextField(blank=True)
     short_message = models.TextField(blank=True)
+    # Fase 2.1: segundo campo de contexto livre, ao lado de short_message —
+    # o par dos dois é o que alimenta as duas perguntas contextuais por
+    # tipo de experiência na Etapa 3 (ver frontend/informationStepConfig.ts).
+    # Deliberadamente genérico (não uma coluna por tipo): o prompt exibido
+    # muda por experience_type no frontend, o dado armazenado é sempre só
+    # texto livre. blank=True (sem null=True), mesmo padrão de letter/
+    # short_message — draft antigo sem este campo simplesmente lê "".
+    context_answer = models.TextField(blank=True)
     music_provider = models.CharField(max_length=32, default="none")
     music_url = models.URLField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

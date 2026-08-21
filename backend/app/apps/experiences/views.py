@@ -274,6 +274,7 @@ class PublicExperienceView(APIView):
             "event_date": draft.event_date,
             "letter": draft.letter,
             "short_message": draft.short_message,
+            "context_answer": draft.context_answer,
             "music": {"provider": draft.music_provider, "url": draft.music_url},
             "media": media_items,
             "published_at": draft.published_at,

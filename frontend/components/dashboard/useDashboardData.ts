@@ -34,6 +34,7 @@ export type Draft = {
   event_date: string | null;
   letter: string;
   short_message: string;
+  context_answer: string;
   music_provider: string;
   music_url: string;
   media: DraftMedia[];

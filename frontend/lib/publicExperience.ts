@@ -23,6 +23,7 @@ export type PublicExperienceResponse = {
   event_date: string | null;
   letter: string;
   short_message: string;
+  context_answer: string;
   music: { provider: string; url: string };
   media: PublicMedia[];
   published_at: string;
@@ -73,6 +74,7 @@ export function toExperience(data: PublicExperienceResponse): Experience {
     videos: urlsFor("video"),
     letter: data.letter,
     shortMessage: data.short_message,
+    contextAnswer: data.context_answer,
     music: {
       // The backend field has no DB-level choices constraint, but every
       // value that can reach it was written by the wizard's own MusicStep,

@@ -51,8 +51,8 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
         model = ExperienceDraft
         fields = (
             "id", "status", "slug", "experience_type", "theme", "title", "recipient_name",
-            "creator_name", "event_date", "letter", "short_message", "music_provider",
-            "music_url", "media", "created_at", "updated_at",
+            "creator_name", "event_date", "letter", "short_message", "context_answer",
+            "music_provider", "music_url", "media", "created_at", "updated_at",
         )
         # slug is only ever set by PublicationService on first publish (see
         # models.ExperienceDraft.slug) — never client-writable, same as status.
@@ -117,6 +117,7 @@ class PublicExperienceSerializer(serializers.Serializer):
     event_date = serializers.DateField(allow_null=True)
     letter = serializers.CharField()
     short_message = serializers.CharField()
+    context_answer = serializers.CharField()
     music = PublicMusicSerializer()
     media = PublicMediaSerializer(many=True)
     published_at = serializers.DateTimeField()

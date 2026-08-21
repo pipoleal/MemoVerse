@@ -792,6 +792,7 @@ class PublicExperienceViewTests(TestCase):
             event_date="2026-12-25",
             letter="Uma carta bonita.",
             short_message="Com carinho.",
+            context_answer="Nos conhecemos na faculdade.",
             music_provider="youtube",
             music_url="https://www.youtube.com/watch?v=abc123",
         )
@@ -813,6 +814,7 @@ class PublicExperienceViewTests(TestCase):
         self.assertEqual(str(response.data["event_date"]), "2026-12-25")
         self.assertEqual(response.data["letter"], "Uma carta bonita.")
         self.assertEqual(response.data["short_message"], "Com carinho.")
+        self.assertEqual(response.data["context_answer"], "Nos conhecemos na faculdade.")
         self.assertEqual(response.data["music"], {"provider": "youtube", "url": "https://www.youtube.com/watch?v=abc123"})
         self.assertIn("published_at", response.data)
         self.assertEqual(response.data["media"], [])
@@ -968,7 +970,7 @@ class PublicExperienceViewTests(TestCase):
             {
                 "slug", "title", "experience_type", "theme", "recipient_name",
                 "creator_name", "event_date", "letter", "short_message",
-                "music", "media", "published_at", "viewer_can_manage",
+                "music", "media", "published_at", "viewer_can_manage", "context_answer",
             },
         )
 
@@ -1643,6 +1645,17 @@ class DraftCreationAndPatchTests(TestCase):
         self.assertEqual(response.data["title"], "Aniversário")
         self.assertEqual(response.data["theme"], "")
 
+    def test_legacy_draft_without_context_answer_reads_as_empty_string(self):
+        # Fase 2.1: um draft criado antes deste campo existir (aqui,
+        # simulado por não passar context_answer no create) nunca deveria
+        # quebrar ao ser lido — mesma garantia que short_message/letter já
+        # davam antes.
+        user = make_user()
+        draft = make_draft(user)
+        response = auth_client(user).get(draft_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["context_answer"], "")
+
     def test_created_draft_round_trips_every_field_on_get(self):
         user = make_user()
         payload = {
@@ -1654,6 +1667,7 @@ class DraftCreationAndPatchTests(TestCase):
             "event_date": "2026-12-25",
             "letter": "Uma carta especial.",
             "short_message": "Com carinho",
+            "context_answer": "Nos conhecemos há 5 anos.",
             "music_provider": "youtube",
             "music_url": "https://youtube.com/watch?v=abc123",
         }
@@ -1672,13 +1686,19 @@ class DraftCreationAndPatchTests(TestCase):
         draft = make_draft(user)
         response = auth_client(user).patch(
             draft_detail_url(draft.id),
-            {"letter": "Nova carta", "short_message": "Nova mensagem", "recipient_name": "Carla"},
+            {
+                "letter": "Nova carta",
+                "short_message": "Nova mensagem",
+                "context_answer": "Nova resposta de contexto",
+                "recipient_name": "Carla",
+            },
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         draft.refresh_from_db()
         self.assertEqual(draft.letter, "Nova carta")
         self.assertEqual(draft.short_message, "Nova mensagem")
+        self.assertEqual(draft.context_answer, "Nova resposta de contexto")
         self.assertEqual(draft.recipient_name, "Carla")
 
     def test_get_draft_of_another_user_returns_404(self):

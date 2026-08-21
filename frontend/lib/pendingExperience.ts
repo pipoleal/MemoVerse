@@ -14,6 +14,7 @@ export type DraftPayload = {
   event_date: string | null;
   letter: string;
   short_message: string;
+  context_answer: string;
   music_provider: Experience["music"]["provider"];
   music_url: string;
 };
@@ -34,6 +35,7 @@ export function toPayload(experience: Experience): DraftPayload {
     event_date: experience.eventDate || null,
     letter: experience.letter,
     short_message: experience.shortMessage,
+    context_answer: experience.contextAnswer,
     music_provider: experience.music.provider,
     music_url: experience.music.url,
   };
@@ -80,6 +82,7 @@ export function fromPayload(payload: DraftPayload): Omit<Experience, "photos" | 
     eventDate: payload.event_date ?? "",
     letter: payload.letter,
     shortMessage: payload.short_message,
+    contextAnswer: payload.context_answer,
     music: {
       provider: payload.music_provider,
       url: payload.music_url,

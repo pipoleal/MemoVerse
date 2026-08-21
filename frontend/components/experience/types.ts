@@ -31,6 +31,11 @@ export interface Experience {
 
   shortMessage: string;
 
+  // Fase 2.1: segunda pergunta contextual por tipo de experiência (a
+  // primeira é shortMessage) — ver informationStepConfig.ts. Texto livre,
+  // sempre opcional, mesmo padrão de shortMessage.
+  contextAnswer: string;
+
   music: MusicSelection;
 
   published: boolean;
@@ -56,6 +61,8 @@ export const initialExperience: Experience = {
   letter: "",
 
   shortMessage: "",
+
+  contextAnswer: "",
 
   music: {
     provider: "none",

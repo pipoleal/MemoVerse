@@ -15,6 +15,24 @@ import MusicStep from "./steps/MusicStep";
 import PreviewStep from "./steps/PreviewStep";
 
 import { useExperience } from "./context/ExperienceContext";
+import { getInformationStepConfig } from "./informationStepConfig";
+import type { Experience } from "./types";
+
+// Fase 2.1: cada campo de config.fields carrega seu próprio label — a
+// mensagem de erro é derivada dele, nunca uma lista de `if` por campo. Só
+// itera os campos do tipo atual (getInformationStepConfig já resolve o
+// fallback pra tipo vazio/desconhecido — ver informationStepConfig.ts).
+function missingRequiredFieldError(experience: Experience): string {
+  const { fields } = getInformationStepConfig(experience.type);
+
+  for (const field of fields) {
+    if (!field.required) continue;
+    if (experience[field.key].trim()) continue;
+    return `Preencha o campo "${field.label}" para continuar.`;
+  }
+
+  return "";
+}
 
 export default function ExperienceBuilder() {
   const [step, setStep] = useState(1);
@@ -36,21 +54,7 @@ export default function ExperienceBuilder() {
     }
 
     if (step === 3) {
-      if (!experience.title.trim()) {
-        return "Digite um título para sua experiência.";
-      }
-
-      if (!experience.recipient.trim()) {
-        return "Informe para quem é essa experiência.";
-      }
-
-      if (!experience.creator.trim()) {
-        return "Informe seu nome.";
-      }
-
-      if (!experience.eventDate) {
-        return "Escolha uma data especial.";
-      }
+      return missingRequiredFieldError(experience);
     }
 
     return "";

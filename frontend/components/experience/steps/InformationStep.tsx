@@ -6,15 +6,65 @@ import Input from "../../ui/forms/Input";
 import Textarea from "../../ui/forms/Textarea";
 import DateInput from "../../ui/forms/DateInput";
 import { useExperience } from "../context/ExperienceContext";
+import { getInformationStepConfig, type InformationField } from "../informationStepConfig";
+import type { Experience } from "../types";
 
 type InformationStepProps = {
   error?: string;
 };
 
+// Fase 2.1: renderiza os campos de config.fields (ver informationStepConfig.ts)
+// — nunca um `if (type === "...")` aqui. Novo tipo ou pergunta = editar só
+// o registry, este componente não muda.
+function InformationFieldControl({
+  field,
+  experience,
+  updateExperience,
+}: {
+  field: InformationField;
+  experience: Experience;
+  updateExperience: (data: Partial<Experience>) => void;
+}) {
+  const value = experience[field.key];
+
+  function handleChange(newValue: string) {
+    // field.key é sempre uma das 6 chaves string de Experience (ver
+    // InformationFieldKey em informationStepConfig.ts) — a asserção só
+    // recupera o que a indexação computada por si só perde de tipo.
+    updateExperience({ [field.key]: newValue } as Partial<Experience>);
+  }
+
+  return (
+    <Field label={field.label} description={field.description}>
+      {field.component === "date" && (
+        <DateInput value={value} onChange={(event) => handleChange(event.target.value)} />
+      )}
+
+      {field.component === "input" && (
+        <Input
+          value={value}
+          onChange={(event) => handleChange(event.target.value)}
+          placeholder={field.placeholder}
+        />
+      )}
+
+      {field.component === "textarea" && (
+        <Textarea
+          value={value}
+          onChange={(event) => handleChange(event.target.value)}
+          placeholder={field.placeholder}
+          rows={field.rows ?? 4}
+        />
+      )}
+    </Field>
+  );
+}
+
 export default function InformationStep({
   error,
 }: InformationStepProps) {
   const { experience, updateExperience } = useExperience();
+  const config = getInformationStepConfig(experience.type);
 
   return (
     <FadeIn>
@@ -38,80 +88,14 @@ export default function InformationStep({
         )}
 
         <div className="mt-12 space-y-8">
-          <Field
-            label="Título da experiência"
-            description="Dê um nome especial para essa experiência."
-          >
-            <Input
-              value={experience.title}
-              onChange={(event) =>
-                updateExperience({
-                  title: event.target.value,
-                })
-              }
-              placeholder="Nosso Pedido de Namoro ❤️"
+          {config.fields.map((field) => (
+            <InformationFieldControl
+              key={field.key}
+              field={field}
+              experience={experience}
+              updateExperience={updateExperience}
             />
-          </Field>
-
-          <Field
-            label="Para quem é?"
-            description="A pessoa que receberá essa experiência."
-          >
-            <Input
-              value={experience.recipient}
-              onChange={(event) =>
-                updateExperience({
-                  recipient: event.target.value,
-                })
-              }
-              placeholder="Nome de quem receberá"
-            />
-          </Field>
-
-          <Field
-            label="Seu nome"
-            description="Como você gostaria de aparecer na experiência?"
-          >
-            <Input
-              value={experience.creator}
-              onChange={(event) =>
-                updateExperience({
-                  creator: event.target.value,
-                })
-              }
-              placeholder="Seu nome"
-            />
-          </Field>
-
-          <Field
-            label="Data especial"
-            description="A data que representa esse momento."
-          >
-            <DateInput
-              value={experience.eventDate}
-              onChange={(event) =>
-                updateExperience({
-                  eventDate: event.target.value,
-                })
-              }
-            />
-          </Field>
-
-          <Field
-            label="Uma mensagem curta"
-            description="Opcional. Uma frase para dar ainda mais personalidade à experiência."
-          >
-            <Textarea
-              value={experience.shortMessage}
-              onChange={(event) =>
-                updateExperience({
-                  shortMessage: event.target.value,
-                })
-              }
-              placeholder="Toda estrela tem uma história. A nossa começou aqui..."
-              rows={4}
-            />
-          </Field>
+          ))}
         </div>
       </section>
     </FadeIn>
