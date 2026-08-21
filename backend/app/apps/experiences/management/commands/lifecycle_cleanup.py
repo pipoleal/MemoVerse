@@ -22,6 +22,11 @@ Cortes de retenção aplicados (aprovados na 9B.2, todos com flag de
 override para testes/ajuste sem precisar de deploy):
 
 - Draft `draft` (nunca avançou), sem nenhum Payment: 30 dias sem updated_at.
+- Draft anônimo nunca reivindicado (owner IS NULL — Etapa 10): 48h desde
+  created_at. Mais curto que o de draft abandonado autenticado de propósito
+  — é o perfil mais provável de abandono rápido/spam (visitante que nunca
+  chegou a criar conta), e sem Payment possível enquanto owner for None
+  (checkout exige autenticação — ver payments.views.checkout).
 - Draft `payment_failed`: 30 dias sem updated_at (ver ATENÇÃO no relatório:
   Payment.draft é on_delete=PROTECT — um Draft com Payment associado NÃO
   PODE ser hard-deleted enquanto o Payment existir; ver seção de riscos).
@@ -61,6 +66,7 @@ from ...models import ExperienceDraft, Media
 from ...storage import get_r2_client, r2_is_configured
 
 DEFAULT_DRAFT_ABANDONED_DAYS = 30
+DEFAULT_DRAFT_ANONYMOUS_UNCLAIMED_HOURS = 48
 DEFAULT_PAYMENT_FAILED_DAYS = 30
 DEFAULT_MEDIA_FAILED_DAYS = 7
 DEFAULT_R2_ORPHAN_GRACE_DAYS = 30
@@ -95,6 +101,9 @@ class Command(BaseCommand):
             ),
         )
         parser.add_argument("--draft-abandoned-days", type=int, default=DEFAULT_DRAFT_ABANDONED_DAYS)
+        parser.add_argument(
+            "--draft-anonymous-unclaimed-hours", type=int, default=DEFAULT_DRAFT_ANONYMOUS_UNCLAIMED_HOURS
+        )
         parser.add_argument("--payment-failed-days", type=int, default=DEFAULT_PAYMENT_FAILED_DAYS)
         parser.add_argument("--media-failed-days", type=int, default=DEFAULT_MEDIA_FAILED_DAYS)
         parser.add_argument("--r2-orphan-grace-days", type=int, default=DEFAULT_R2_ORPHAN_GRACE_DAYS)
@@ -122,6 +131,7 @@ class Command(BaseCommand):
 
         report = self.build_report(
             draft_abandoned_days=options["draft_abandoned_days"],
+            draft_anonymous_unclaimed_hours=options["draft_anonymous_unclaimed_hours"],
             payment_failed_days=options["payment_failed_days"],
             media_failed_days=options["media_failed_days"],
             r2_orphan_grace_days=options["r2_orphan_grace_days"],
@@ -146,6 +156,7 @@ class Command(BaseCommand):
         self,
         *,
         draft_abandoned_days: int = DEFAULT_DRAFT_ABANDONED_DAYS,
+        draft_anonymous_unclaimed_hours: int = DEFAULT_DRAFT_ANONYMOUS_UNCLAIMED_HOURS,
         payment_failed_days: int = DEFAULT_PAYMENT_FAILED_DAYS,
         media_failed_days: int = DEFAULT_MEDIA_FAILED_DAYS,
         r2_orphan_grace_days: int = DEFAULT_R2_ORPHAN_GRACE_DAYS,
@@ -159,6 +170,7 @@ class Command(BaseCommand):
 
         policy = {
             "draft_abandoned_days": draft_abandoned_days,
+            "draft_anonymous_unclaimed_hours": draft_anonymous_unclaimed_hours,
             "payment_failed_days": payment_failed_days,
             "media_pending_minutes": resolved_stale_media_minutes,
             "media_failed_days": media_failed_days,
@@ -174,6 +186,7 @@ class Command(BaseCommand):
             "policy": policy,
             "candidates": {
                 "draft_abandoned": self._draft_abandoned(draft_abandoned_days),
+                "draft_anonymous_unclaimed": self._draft_anonymous_unclaimed(draft_anonymous_unclaimed_hours),
                 "draft_payment_failed": self._draft_payment_failed(payment_failed_days),
                 "media_pending_stale": self._media_pending_stale(resolved_stale_media_minutes),
                 "media_failed_stale": self._media_failed_stale(media_failed_days),
@@ -223,6 +236,28 @@ class Command(BaseCommand):
             "excluded_unexpectedly_has_payment": with_payment.count(),
             "sample_ids": list(clean_qs.order_by("updated_at").values_list("id", flat=True)[:SAMPLE_LIMIT]),
             "reason": f"status=draft, sem nenhum Payment, sem atualização há mais de {days} dias.",
+            "would_delete_media_and_r2_too": True,
+        }
+
+    def _draft_anonymous_unclaimed(self, hours: int) -> dict:
+        cutoff = timezone.now() - timedelta(hours=hours)
+        qs = ExperienceDraft.objects.filter(owner__isnull=True, created_at__lt=cutoff)
+
+        # Defensivo, mesmo padrão de _draft_abandoned: um draft anônimo
+        # (owner IS NULL) estruturalmente nunca deveria ter Payment — o
+        # checkout exige owner=request.user (payments.views.checkout.
+        # DraftCheckoutView), inalcançável enquanto owner for None. Excluído
+        # dos candidatos e contado à parte se acontecer mesmo assim, nunca
+        # assumido — mesma garantia que o requisito "drafts com Payment
+        # nunca são removidos" pede, agora coberta também aqui.
+        with_payment = qs.filter(payments__isnull=False).distinct()
+        clean_qs = qs.exclude(payments__isnull=False)
+
+        return {
+            "count": clean_qs.count(),
+            "excluded_unexpectedly_has_payment": with_payment.count(),
+            "sample_ids": list(clean_qs.order_by("created_at").values_list("id", flat=True)[:SAMPLE_LIMIT]),
+            "reason": f"owner IS NULL (nunca reivindicado), criado há mais de {hours}h.",
             "would_delete_media_and_r2_too": True,
         }
 

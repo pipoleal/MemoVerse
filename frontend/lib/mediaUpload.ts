@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { api } from "./api";
+import { draftClaimHeaders } from "./anonymousDraft";
 
 export type MediaType = "photo" | "video";
 
@@ -51,12 +52,16 @@ function extractErrorMessage(error: unknown, fallback: string): string {
 
 async function requestUploadIntent(draftId: string, mediaType: MediaType, file: File): Promise<UploadIntentResponse> {
   try {
-    const response = await api.post<UploadIntentResponse>(`/experiences/drafts/${draftId}/media/upload-intents/`, {
-      media_type: mediaType,
-      filename: file.name,
-      mime_type: file.type,
-      size_bytes: file.size,
-    });
+    const response = await api.post<UploadIntentResponse>(
+      `/experiences/drafts/${draftId}/media/upload-intents/`,
+      {
+        media_type: mediaType,
+        filename: file.name,
+        mime_type: file.type,
+        size_bytes: file.size,
+      },
+      { headers: draftClaimHeaders(draftId) }
+    );
 
     return response.data;
   } catch (error) {
@@ -116,7 +121,11 @@ function putFileToPresignedUrl(
 
 async function confirmUploadComplete(draftId: string, mediaId: string): Promise<void> {
   try {
-    await api.post(`/experiences/drafts/${draftId}/media/${mediaId}/complete/`);
+    await api.post(
+      `/experiences/drafts/${draftId}/media/${mediaId}/complete/`,
+      undefined,
+      { headers: draftClaimHeaders(draftId) }
+    );
   } catch (error) {
     throw new Error(extractErrorMessage(error, "Não foi possível confirmar o upload."));
   }
@@ -128,7 +137,9 @@ async function confirmUploadComplete(draftId: string, mediaId: string): Promise<
 // not as a failure to surface to the user.
 export async function deleteMediaFile(draftId: string, mediaId: string): Promise<void> {
   try {
-    await api.delete(`/experiences/drafts/${draftId}/media/${mediaId}/`);
+    await api.delete(`/experiences/drafts/${draftId}/media/${mediaId}/`, {
+      headers: draftClaimHeaders(draftId),
+    });
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 404) return;
     throw new Error(extractErrorMessage(error, "Não foi possível remover o arquivo."));

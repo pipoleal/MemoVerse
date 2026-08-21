@@ -4,7 +4,9 @@ import axios from "axios";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { api } from "@/lib/api";
 import { login } from "@/lib/auth";
+import { clearAnonymousDraft, getAnonymousDraft } from "@/lib/anonymousDraft";
 import { clearPendingExperience, hasPendingExperience, savePendingExperienceDraft } from "@/lib/pendingExperience";
 
 import Button from "../ui/Button";
@@ -42,6 +44,21 @@ export default function LoginForm() {
     try {
       await login({ email, password });
       loginSucceeded = true;
+
+      // Etapa 10: mesmo mecanismo de RegisterForm.tsx — ver comentário lá.
+      const anonymousDraft = getAnonymousDraft();
+      if (anonymousDraft) {
+        try {
+          await api.post(`/experiences/drafts/${anonymousDraft.draftId}/claim/`, {
+            claim_token: anonymousDraft.claimToken,
+          });
+        } catch {
+          // ignorado de propósito — ver RegisterForm.tsx
+        } finally {
+          clearAnonymousDraft();
+        }
+      }
+
       if (hasPendingExperience()) {
         await savePendingExperienceDraft();
         clearPendingExperience();

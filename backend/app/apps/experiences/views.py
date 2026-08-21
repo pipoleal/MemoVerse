@@ -1,11 +1,14 @@
 import logging
+import secrets
 import uuid
 from pathlib import PurePath
 
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from django.db.models import Max, Prefetch, Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.text import slugify
@@ -13,6 +16,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from .models import ExperienceDraft, Media, Theme
@@ -33,6 +37,36 @@ logger = logging.getLogger(__name__)
 
 def get_owned_draft_or_404(request, draft_id):
     return get_object_or_404(ExperienceDraft, id=draft_id, owner=request.user)
+
+
+def get_accessible_draft_or_404(request, draft_id):
+    """Etapa 10: mesma garantia de get_owned_draft_or_404, mas aceita
+    também um visitante anônimo dono do X-Draft-Claim-Token exato de um
+    draft ainda não reivindicado (owner IS NULL) — usado pelos endpoints
+    de texto/mídia que o wizard usa em nome de um visitante que ainda não
+    tem conta (ver DraftListCreateView.post e DraftClaimView).
+
+    Dois caminhos, nunca combinados na mesma chamada:
+    1. Usuário autenticado -> exige owner=request.user, exatamente como
+       get_owned_draft_or_404 (usuário autenticado NUNCA passa a acessar
+       um draft de outro só por também carregar um token de algum outro
+       draft anônimo por acaso).
+    2. Visitante anônimo -> exige X-Draft-Claim-Token (só header, nunca
+       querystring/corpo — nunca aparece em URL nem em log de acesso) e
+       owner__isnull=True com aquele token exato.
+
+    Qualquer combinação que não bata cai em Http404 — nunca 401/403,
+    nunca revela se o draft existe, se pertence a outro usuário, ou se já
+    foi reivindicado (as três situações são indistinguíveis de fora).
+    """
+
+    if request.user.is_authenticated:
+        return get_object_or_404(ExperienceDraft, id=draft_id, owner=request.user)
+
+    token = request.headers.get("X-Draft-Claim-Token")
+    if not token:
+        raise Http404
+    return get_object_or_404(ExperienceDraft, id=draft_id, owner__isnull=True, claim_token=token)
 
 
 class ThemeListView(APIView):
@@ -56,7 +90,21 @@ class ThemeListView(APIView):
 
 
 class DraftListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Etapa 10: GET (listar meus drafts) continua exigindo autenticação de
+    # verdade — nunca lista draft anônimo nenhum, de ninguém. POST passa a
+    # aceitar visitante anônimo (ver post() abaixo) — permission_classes
+    # dividido por método com get_permissions(), não um AllowAny amplo na
+    # view inteira.
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_throttles(self):
+        if self.request.method == "POST" and not self.request.user.is_authenticated:
+            self.throttle_scope = "anonymous_draft_create"
+            return [ScopedRateThrottle()]
+        return []
 
     def get(self, request):
         drafts = ExperienceDraft.objects.filter(owner=request.user).prefetch_related("media")
@@ -71,20 +119,45 @@ class DraftListCreateView(APIView):
             # podem estar aqui) — a resposta de erro da API não muda.
             logger.warning("draft.create.failure")
             raise
-        draft = serializer.save(owner=request.user)
-        logger.info("draft.create.success")
-        return Response(ExperienceDraftSerializer(draft).data, status=status.HTTP_201_CREATED)
+
+        if request.user.is_authenticated:
+            # Caminho de sempre, byte a byte igual a antes da Etapa 10.
+            draft = serializer.save(owner=request.user)
+            logger.info("draft.create.success")
+            return Response(ExperienceDraftSerializer(draft).data, status=status.HTTP_201_CREATED)
+
+        # Visitante anônimo (Etapa 10): draft sem dono, com um token de
+        # posse temporária. secrets.token_urlsafe(32) -> 256 bits de
+        # entropia, nunca derivado de e-mail/IP/sessão. O token só existe
+        # nesta variável local e no banco — nunca é logado (o evento abaixo
+        # não carrega o valor), e só é devolvido UMA VEZ, aqui, no corpo
+        # desta resposta: ExperienceDraftSerializer nunca inclui
+        # claim_token (ver Meta.fields em serializers.py), então nenhuma
+        # outra resposta (GET/PATCH/claim) jamais o repete.
+        claim_token = secrets.token_urlsafe(32)
+        draft = serializer.save(owner=None, claim_token=claim_token)
+        logger.info("draft.create.success.anonymous")
+        data = {**ExperienceDraftSerializer(draft).data, "claim_token": claim_token}
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class DraftDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Etapa 10: GET/PATCH aceitam visitante anônimo dono do
+    # X-Draft-Claim-Token certo (via get_accessible_draft_or_404) — DELETE
+    # continua exigindo autenticação de verdade, sem mudança nenhuma (não é
+    # exigido pelo fluxo de retomada, e manter o escopo mínimo evita trocar
+    # IsAuthenticated por AllowAny em mais operações do que o necessário).
+    def get_permissions(self):
+        if self.request.method == "DELETE":
+            return [IsAuthenticated()]
+        return [AllowAny()]
 
     def get(self, request, draft_id):
-        draft = get_owned_draft_or_404(request, draft_id)
+        draft = get_accessible_draft_or_404(request, draft_id)
         return Response(ExperienceDraftSerializer(draft).data)
 
     def patch(self, request, draft_id):
-        draft = get_owned_draft_or_404(request, draft_id)
+        draft = get_accessible_draft_or_404(request, draft_id)
         serializer = ExperienceDraftSerializer(draft, data=request.data, partial=True)
         try:
             serializer.is_valid(raise_exception=True)
@@ -209,10 +282,13 @@ class PublicExperienceView(APIView):
 
 
 class MediaUploadIntentView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Etapa 10: visitante anônimo dono do X-Draft-Claim-Token certo pode
+    # subir mídia normalmente — autorização real é 100% de
+    # get_accessible_draft_or_404 (nunca 404 revela mais que "não achei").
+    permission_classes = [AllowAny]
 
     def post(self, request, draft_id):
-        draft = get_owned_draft_or_404(request, draft_id)
+        draft = get_accessible_draft_or_404(request, draft_id)
         serializer = UploadIntentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -268,10 +344,11 @@ class MediaUploadIntentView(APIView):
 
 
 class MediaUploadCompleteView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Etapa 10: mesmo raciocínio de MediaUploadIntentView.
+    permission_classes = [AllowAny]
 
     def post(self, request, draft_id, media_id):
-        draft = get_owned_draft_or_404(request, draft_id)
+        draft = get_accessible_draft_or_404(request, draft_id)
         media = get_object_or_404(Media, id=media_id, draft=draft)
         try:
             metadata = get_r2_client().head_object(Bucket=settings.R2_BUCKET_NAME, Key=media.storage_key)
@@ -301,10 +378,13 @@ class MediaDeleteView(APIView):
     PUBLISHED.
     """
 
-    permission_classes = [IsAuthenticated]
+    # Etapa 10: mesmo raciocínio de MediaUploadIntentView — visitante
+    # anônimo pode remover a própria mídia (do próprio draft ainda não
+    # reivindicado) antes de ter conta.
+    permission_classes = [AllowAny]
 
     def delete(self, request, draft_id, media_id):
-        draft = get_owned_draft_or_404(request, draft_id)
+        draft = get_accessible_draft_or_404(request, draft_id)
         media = get_object_or_404(Media, id=media_id, draft=draft)
         try:
             delete_object(media.storage_key)
@@ -312,3 +392,69 @@ class MediaDeleteView(APIView):
             pass
         media.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DraftClaimView(APIView):
+    """POST /api/experiences/drafts/<uuid:draft_id>/claim/
+
+    Etapa 10 — reivindica, para request.user, um draft criado
+    anonimamente (owner IS NULL) por um visitante que acabou de se
+    cadastrar ou entrar. Chamado automaticamente pelo frontend logo após
+    login/cadastro bem-sucedido (nunca uma ação manual do usuário) — ver
+    lib/anonymousDraft.ts e RegisterForm/LoginForm no frontend.
+
+    claim_token só é aceito no CORPO da requisição — nunca em querystring
+    (nunca aparece em URL, nunca em log de acesso/analytics que capture a
+    URL da requisição) — e nunca é logado por este view em nenhuma
+    circunstância, sucesso ou falha.
+
+    transaction.atomic() + select_for_update() torna duas tentativas de
+    reivindicar o MESMO draft ao mesmo tempo (ex.: duplo clique, StrictMode,
+    duas abas) seguras: a segunda só roda depois que a primeira já
+    commitou, e nesse ponto ou já é idempotente (mesmo usuário) ou já
+    falha honestamente (owner não é mais None).
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "draft_claim"
+
+    def post(self, request, draft_id):
+        token = request.data.get("claim_token")
+        if not token or not isinstance(token, str):
+            # Nunca 400 aqui: um claim_token ausente/malformado não deve
+            # ser distinguível de "draft não encontrado" — mesma postura de
+            # "nunca revelar existência" do resto do app.
+            raise Http404
+
+        with transaction.atomic():
+            try:
+                draft = ExperienceDraft.objects.select_for_update().get(id=draft_id)
+            except ExperienceDraft.DoesNotExist:
+                raise Http404
+
+            if draft.owner_id == request.user.id:
+                # Idempotente: já é deste mesmo usuário (retry, duplo clique,
+                # segunda aba que ganhou a corrida depois desta) — sucesso
+                # sem reaplicar nada, nunca um erro para quem já é o dono.
+                logger.info("draft.claim.success")
+                return Response(ExperienceDraftSerializer(draft).data)
+
+            # secrets.compare_digest evita vazar, por tempo de resposta,
+            # quantos caracteres do token bateram — draft.claim_token é ""
+            # (nunca None) no comparando quando já foi reivindicado, só
+            # para manter os dois lados sempre string.
+            token_matches = secrets.compare_digest(draft.claim_token or "", token)
+            if draft.owner_id is not None or not token_matches:
+                # ATENÇÃO: nunca diferenciar "já reivindicado por outro",
+                # "token errado" e "draft não existe" — os três caem aqui,
+                # sempre 404, sempre a mesma mensagem genérica do DRF.
+                logger.warning("draft.claim.failure")
+                raise Http404
+
+            draft.owner = request.user
+            draft.claim_token = None
+            draft.save(update_fields=["owner", "claim_token", "updated_at"])
+
+        logger.info("draft.claim.success")
+        return Response(ExperienceDraftSerializer(draft).data)

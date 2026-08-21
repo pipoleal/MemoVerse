@@ -13,7 +13,13 @@ import {
 } from "react";
 
 import { api } from "@/lib/api";
-import { fetchDraft, fromPayload, toPayload } from "@/lib/pendingExperience";
+import {
+  clearAnonymousDraft,
+  draftClaimHeaders,
+  getAnonymousDraft,
+  saveAnonymousDraft,
+} from "@/lib/anonymousDraft";
+import { fetchDraft, fromPayload, toPayload, type DraftDetail } from "@/lib/pendingExperience";
 import { getAccessToken } from "@/lib/storage";
 
 import {
@@ -86,6 +92,22 @@ type ExperienceContextType = {
   initialDraftLoadError: string | null;
 };
 
+// Compartilhado pelos dois efeitos de retomada abaixo (Dashboard
+// "Continuar edição" e retomada de draft anônimo) — mesma conversão de
+// mídia já confirmada como upload_status=uploaded, nunca duplicada.
+function mediaItemsToEntries(media: DraftDetail["media"], mediaType: "photo" | "video"): MediaEntry[] {
+  return media
+    .filter((item) => item.media_type === mediaType && item.upload_status === "uploaded" && item.url)
+    .map((item) => ({
+      id: item.id,
+      mediaId: item.id,
+      previewUrl: item.url as string,
+      status: "uploaded" as const,
+      progress: 100,
+      fromServer: true,
+    }));
+}
+
 const ExperienceContext =
   createContext<ExperienceContextType | null>(null);
 
@@ -143,14 +165,28 @@ export function ExperienceProvider({
 
   const ensureDraftId = useCallback((): Promise<string | null> => {
     if (draftId) return Promise.resolve(draftId);
-    if (!getAccessToken()) return Promise.resolve(null);
+    // Etapa 10: nenhum early-return por falta de token aqui — a criação
+    // anônima é o próprio propósito desta etapa (ver POST abaixo, que
+    // retorna claim_token quando não autenticado). Antes desta etapa este
+    // guard existia porque a criação exigia IsAuthenticated; agora seria
+    // um bug que bloquearia o fluxo inteiro para visitantes sem conta.
     if (ensureDraftPromiseRef.current) return ensureDraftPromiseRef.current;
 
     const promise = (async () => {
       try {
         const payload = toPayload(experienceRef.current);
-        const response = await api.post<{ id: string }>("/experiences/drafts/", payload);
+        const response = await api.post<{ id: string; claim_token?: string }>(
+          "/experiences/drafts/",
+          payload
+        );
         setDraftId(response.data.id);
+        // Etapa 10: claim_token só vem preenchido quando esta criação foi
+        // anônima (sem Authorization) — persiste localmente para as
+        // próximas chamadas (PATCH/mídia) e para a reivindicação
+        // automática depois do cadastro/login (ver RegisterForm/LoginForm).
+        if (response.data.claim_token) {
+          saveAnonymousDraft(response.data.id, response.data.claim_token);
+        }
         return response.data.id;
       } catch {
         return null;
@@ -168,7 +204,9 @@ export function ExperienceProvider({
     if (!id) return;
 
     try {
-      await api.patch(`/experiences/drafts/${id}/`, toPayload(experienceRef.current));
+      await api.patch(`/experiences/drafts/${id}/`, toPayload(experienceRef.current), {
+        headers: draftClaimHeaders(id),
+      });
     } catch {
       // Fire-and-forget by design (see the type comment above) — the next
       // step transition re-sends the full snapshot, so a transient failure
@@ -195,30 +233,8 @@ export function ExperienceProvider({
         if (cancelled) return;
         setDraftId(draft.id);
         setExperience((previous) => ({ ...previous, ...fromPayload(draft) }));
-        setPhotoEntries(
-          draft.media
-            .filter((item) => item.media_type === "photo" && item.upload_status === "uploaded" && item.url)
-            .map((item) => ({
-              id: item.id,
-              mediaId: item.id,
-              previewUrl: item.url as string,
-              status: "uploaded",
-              progress: 100,
-              fromServer: true,
-            }))
-        );
-        setVideoEntries(
-          draft.media
-            .filter((item) => item.media_type === "video" && item.upload_status === "uploaded" && item.url)
-            .map((item) => ({
-              id: item.id,
-              mediaId: item.id,
-              previewUrl: item.url as string,
-              status: "uploaded",
-              progress: 100,
-              fromServer: true,
-            }))
-        );
+        setPhotoEntries(mediaItemsToEntries(draft.media, "photo"));
+        setVideoEntries(mediaItemsToEntries(draft.media, "video"));
       })
       .catch(() => {
         if (cancelled) return;
@@ -230,6 +246,63 @@ export function ExperienceProvider({
         if (cancelled) return;
         setIsLoadingInitialDraft(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialDraftId]);
+
+  // Etapa 10 — retomada de draft anônimo: ao voltar para /experience/new
+  // (sem initialDraftId — esse caso já é tratado pelo efeito acima) sem
+  // estar autenticado, verifica se existe um {draftId, claimToken} salvo
+  // localmente e, se sim, CONFIRMA no servidor antes de confiar nele —
+  // nunca assume que o draft ainda existe/ainda não foi reivindicado só
+  // porque o localStorage tem algo (ver getAnonymousDraft). Qualquer falha
+  // (404 — draft expirado, já reivindicado em outra aba/dispositivo, ou
+  // nunca existiu — ou erro de rede) limpa o estado local e deixa o
+  // usuário começar um draft novo, sem mostrar erro: do ponto de vista de
+  // fora, essas causas são e devem continuar indistinguíveis.
+  useEffect(() => {
+    if (initialDraftId) return;
+
+    if (getAccessToken()) {
+      // Autenticado numa visita "nova" (sem initialDraftId): nada a
+      // retomar daqui — um eventual draft anônimo antigo neste navegador
+      // já teria sido reivindicado (ou descartado) no login/cadastro (ver
+      // RegisterForm/LoginForm). Só limpa por higiene.
+      clearAnonymousDraft();
+      return;
+    }
+
+    const stored = getAnonymousDraft();
+    if (!stored) return;
+
+    let cancelled = false;
+
+    // setIsLoadingInitialDraft(true) roda dentro deste callback assíncrono
+    // (nunca síncrono no corpo do efeito) de propósito — mesma exigência
+    // do lint react-hooks/set-state-in-effect: um setState direto e
+    // síncrono no corpo do efeito encadeia uma re-renderização imediata;
+    // adiado para dentro do callback, é só mais uma atualização normal de
+    // estado a partir de um evento assíncrono (a resposta ainda não
+    // chegou), o mesmo padrão já usado em .then()/.catch() logo abaixo.
+    (async () => {
+      setIsLoadingInitialDraft(true);
+      try {
+        const draft = await fetchDraft(stored.draftId, { "X-Draft-Claim-Token": stored.claimToken });
+        if (cancelled) return;
+        setDraftId(draft.id);
+        setExperience((previous) => ({ ...previous, ...fromPayload(draft) }));
+        setPhotoEntries(mediaItemsToEntries(draft.media, "photo"));
+        setVideoEntries(mediaItemsToEntries(draft.media, "video"));
+      } catch {
+        if (cancelled) return;
+        clearAnonymousDraft();
+      } finally {
+        if (cancelled) return;
+        setIsLoadingInitialDraft(false);
+      }
+    })();
 
     return () => {
       cancelled = true;

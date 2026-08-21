@@ -56,6 +56,10 @@ def age_draft(draft, *, days):
     ExperienceDraft.objects.filter(pk=draft.pk).update(updated_at=timezone.now() - timedelta(days=days))
 
 
+def age_draft_created_at(draft, *, hours):
+    ExperienceDraft.objects.filter(pk=draft.pk).update(created_at=timezone.now() - timedelta(hours=hours))
+
+
 def make_payment(*, draft, attempt_number=1, status=Payment.Status.APPROVED, **overrides):
     plan = Plan.objects.get(code="weekly")
     defaults = {
@@ -171,6 +175,60 @@ class DraftAbandonedCandidateTests(TestCase):
         age_draft(draft, days=10)
 
         report = run_json("--dry-run", "--draft-abandoned-days=5")["candidates"]["draft_abandoned"]
+        self.assertEqual(report["count"], 1)
+
+
+class DraftAnonymousUnclaimedCandidateTests(TestCase):
+    """Etapa 10: draft anônimo (owner IS NULL) nunca reivindicado, criado
+    há mais de 48h por padrão."""
+
+    def test_old_unclaimed_anonymous_draft_is_a_candidate(self):
+        draft = make_draft(None, status=ExperienceDraft.Status.DRAFT, claim_token="tok-1")
+        age_draft_created_at(draft, hours=49)
+
+        report = run_json("--dry-run")["candidates"]["draft_anonymous_unclaimed"]
+        self.assertEqual(report["count"], 1)
+        self.assertEqual(report["sample_ids"], [str(draft.id)])
+
+    def test_recent_unclaimed_anonymous_draft_is_not_a_candidate(self):
+        draft = make_draft(None, status=ExperienceDraft.Status.DRAFT, claim_token="tok-2")
+        age_draft_created_at(draft, hours=1)
+
+        report = run_json("--dry-run")["candidates"]["draft_anonymous_unclaimed"]
+        self.assertEqual(report["count"], 0)
+
+    def test_claimed_draft_is_never_a_candidate_even_if_old(self):
+        # owner preenchido = já foi reivindicado — nunca cai nesta
+        # categoria, mesmo muito antigo (cairia, quando muito, em
+        # draft_abandoned, categoria separada e com seu próprio corte).
+        owner = make_user("owner@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.DRAFT)
+        age_draft_created_at(draft, hours=200)
+        age_draft(draft, days=1)  # updated_at recente o bastante pra não cair em draft_abandoned também
+
+        report = run_json("--dry-run")["candidates"]["draft_anonymous_unclaimed"]
+        self.assertEqual(report["count"], 0)
+
+    def test_unclaimed_draft_with_unexpected_payment_is_excluded_and_flagged(self):
+        # Estruturalmente não deveria existir (checkout exige owner), mas a
+        # checagem defensiva deve continuar excluindo se acontecer mesmo
+        # assim — nunca remove um draft com Payment associado.
+        draft = make_draft(None, status=ExperienceDraft.Status.DRAFT, claim_token="tok-3")
+        age_draft_created_at(draft, hours=49)
+        temp_owner = make_user("temp-owner@example.com")
+        make_payment(draft=draft, owner=temp_owner, status=Payment.Status.REJECTED)
+
+        report = run_json("--dry-run")["candidates"]["draft_anonymous_unclaimed"]
+        self.assertEqual(report["count"], 0)
+        self.assertEqual(report["excluded_unexpectedly_has_payment"], 1)
+
+    def test_hours_threshold_is_overridable(self):
+        draft = make_draft(None, status=ExperienceDraft.Status.DRAFT, claim_token="tok-4")
+        age_draft_created_at(draft, hours=10)
+
+        report = run_json("--dry-run", "--draft-anonymous-unclaimed-hours=5")["candidates"][
+            "draft_anonymous_unclaimed"
+        ]
         self.assertEqual(report["count"], 1)
 
 
@@ -372,8 +430,8 @@ class OutputFormatTests(TestCase):
         self.assertEqual(
             set(report["candidates"].keys()),
             {
-                "draft_abandoned", "draft_payment_failed", "media_pending_stale",
-                "media_failed_stale", "r2_orphans_past_grace",
+                "draft_abandoned", "draft_anonymous_unclaimed", "draft_payment_failed",
+                "media_pending_stale", "media_failed_stale", "r2_orphans_past_grace",
             },
         )
         self.assertEqual(

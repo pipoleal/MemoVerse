@@ -1101,8 +1101,14 @@ class MediaDeleteViewTests(TestCase):
         self.assertTrue(Media.objects.filter(id=self.media.id).exists())
 
     def test_anonymous_user_cannot_delete(self):
+        # Etapa 10: MediaDeleteView agora é AllowAny (para permitir drafts
+        # anônimos com X-Draft-Claim-Token) — uma requisição anônima sem esse
+        # header, contra um draft que tem owner, cai em
+        # get_accessible_draft_or_404 e resulta em 404 (não mais 401/403),
+        # igual a qualquer outra combinação não autorizada (ver
+        # test_anonymous_draft.py).
         response = APIClient().delete(media_delete_url(self.draft.id, self.media.id))
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertTrue(Media.objects.filter(id=self.media.id).exists())
 
     def test_nonexistent_media_id_returns_404(self):

@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 
 import dj_database_url
+from corsheaders.defaults import default_headers
 from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -186,6 +187,14 @@ MAILERS = {
 
 AUTH_USER_MODEL = "accounts.User"
 
+# Etapa 9B.6: conta administrativa nomeada por e-mail, alternativa ao
+# is_superuser para o painel /admin e os endpoints /api/ops/9b4/* (ver
+# apps.accounts.permissions.is_production_admin). Vazio por padrão —
+# sem esta variável configurada, o comportamento é idêntico ao de antes
+# desta etapa (só is_superuser abre o painel). Nunca uma senha, nunca
+# hardcoded — só o e-mail, via variável de ambiente.
+MEMOVERSE_ADMIN_EMAIL = config("MEMOVERSE_ADMIN_EMAIL", default="")
+
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -204,6 +213,13 @@ REST_FRAMEWORK = {
         # contra um cliente com bug em retry-loop, não um requisito de
         # segurança forte como os três acima.
         "logout": "30/min",
+        # Etapa 10: POST /experiences/drafts/ sem autenticação (visitante
+        # anônimo) e POST .../claim/ são os dois pontos novos alcançáveis
+        # sem conta — limitados por IP para conter spam de drafts/mídia e
+        # tentativa de força bruta de claim_token (embora os 256 bits de
+        # entropia já tornem isso inviável na prática; ver DraftClaimView).
+        "anonymous_draft_create": "20/hour",
+        "draft_claim": "20/hour",
     },
 }
 
@@ -232,6 +248,16 @@ CORS_ALLOWED_ORIGINS = config(
 )
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Etapa 10 (correção pós-teste manual): X-Draft-Claim-Token não está na
+# lista padrão do django-cors-headers — sem isto, o preflight (OPTIONS)
+# responde 200 mas o navegador bloqueia a requisição real (PATCH/upload/
+# delete) sempre que frontend e backend estão em origens diferentes, que é
+# o caso tanto em dev (localhost:3000 -> 127.0.0.1:8000) quanto em produção
+# (Vercel -> Render). Sem este header nenhuma operação de draft anônimo
+# funciona de fato pelo navegador, apesar do backend estar correto — só
+# apareceu num teste manual em browser real, nunca nos testes de API.
+CORS_ALLOW_HEADERS = list(default_headers) + ["x-draft-claim-token"]
 
 
 # ==========================

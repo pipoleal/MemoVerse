@@ -112,6 +112,7 @@ class LifecycleCleanupPreviewView(_BaseOpsReportView):
         logger.info("ops.lifecycle_cleanup_preview.accessed")
         report = LifecycleCleanupCommand().build_report(
             draft_abandoned_days=data.get("draft_abandoned_days", 30),
+            draft_anonymous_unclaimed_hours=data.get("draft_anonymous_unclaimed_hours", 48),
             payment_failed_days=data.get("payment_failed_days", 30),
             media_failed_days=data.get("media_failed_days", 7),
             r2_orphan_grace_days=data.get("r2_orphan_grace_days", 30),

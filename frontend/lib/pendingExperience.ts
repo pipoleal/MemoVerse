@@ -59,8 +59,11 @@ export type DraftDetail = DraftPayload & {
   media: DraftMediaItem[];
 };
 
-export async function fetchDraft(draftId: string): Promise<DraftDetail> {
-  const response = await api.get<DraftDetail>(`/experiences/drafts/${draftId}/`);
+export async function fetchDraft(
+  draftId: string,
+  headers: Record<string, string> = {}
+): Promise<DraftDetail> {
+  const response = await api.get<DraftDetail>(`/experiences/drafts/${draftId}/`, { headers });
   return response.data;
 }
 

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
 import { login } from "@/lib/auth";
+import { clearAnonymousDraft, getAnonymousDraft } from "@/lib/anonymousDraft";
 import { clearPendingExperience, hasPendingExperience, savePendingExperienceDraft } from "@/lib/pendingExperience";
 import { saveUserFirstName } from "@/lib/storage";
 import Button from "../ui/Button";
@@ -42,6 +43,27 @@ export default function RegisterForm() {
       }
       await login({ email, password });
       saveUserFirstName(firstName);
+
+      // Etapa 10: reivindica o draft anônimo (texto + mídia já enviada),
+      // se existir. Best-effort de propósito — cadastro/login já
+      // concluídos com sucesso; um token expirado/já reivindicado (outra
+      // aba, outro dispositivo) nunca deve impedir o usuário de continuar.
+      const anonymousDraft = getAnonymousDraft();
+      if (anonymousDraft) {
+        try {
+          await api.post(`/experiences/drafts/${anonymousDraft.draftId}/claim/`, {
+            claim_token: anonymousDraft.claimToken,
+          });
+        } catch {
+          // ignorado de propósito — ver comentário acima
+        } finally {
+          clearAnonymousDraft();
+        }
+      }
+
+      // Fallback legado (mantido nesta etapa — ver Etapa 10 e
+      // lib/pendingExperience.ts): cobre qualquer sessão anterior a esta
+      // funcionalidade que só tenha o snapshot de texto em sessionStorage.
       if (hasPendingExperience()) {
         await savePendingExperienceDraft();
         clearPendingExperience();

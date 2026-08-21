@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
 from django.db.models import Model
 from django.db.models.query import QuerySet
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -122,7 +122,10 @@ def assert_no_writes():
 
 
 class AuthenticationTests(TestCase):
-    """401 sem token, 403 com token mas sem is_superuser — para as 3 rotas."""
+    """401 sem token, 403 com token mas sem permissão de admin — para as 3
+    rotas. Etapa 9B.6: admin agora também pode vir de
+    settings.MEMOVERSE_ADMIN_EMAIL, não só de is_superuser — ver
+    EmailBasedAdminTests logo abaixo para essa cobertura específica."""
 
     def test_anonymous_gets_401_on_all_three_routes(self):
         client = APIClient()
@@ -162,6 +165,73 @@ class AuthenticationTests(TestCase):
         response = client.get(INVENTORY_URL)
         # SimpleJWT já rejeita usuário inativo na própria autenticação.
         self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+
+class EmailBasedAdminTests(TestCase):
+    """Etapa 9B.6: settings.MEMOVERSE_ADMIN_EMAIL como segundo caminho de
+    admin, sem depender de is_superuser — contra os endpoints reais
+    (não só o helper isolado, já coberto em
+    apps.accounts.tests.IsProductionAdminHelperTests)."""
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_matching_email_regular_user_gets_200_on_all_three_routes(self):
+        user = make_regular_user("memoversebr@gmail.com")
+        client = auth_client(user)
+        for url in ALL_URLS:
+            with assert_no_writes():
+                response = client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_200_OK, url)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_different_email_regular_user_still_gets_403(self):
+        user = make_regular_user("someone-else@example.com")
+        client = auth_client(user)
+        for url in ALL_URLS:
+            response = client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, url)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_inactive_user_with_matching_email_is_rejected(self):
+        user = make_regular_user("memoversebr@gmail.com")
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        client = auth_client(user)
+        response = client.get(INVENTORY_URL)
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_matching_email_without_memoverse_admin_email_configured_gets_403(self):
+        # Sem a variável de ambiente setada (default ""), o mesmo e-mail
+        # que seria admin em produção não tem nenhum privilégio especial
+        # aqui — comportamento idêntico ao de antes da 9B.6.
+        user = make_regular_user("memoversebr@gmail.com")
+        client = auth_client(user)
+        response = client.get(INVENTORY_URL)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_email_admin_never_writes_even_with_check_r2_and_real_candidates(self):
+        # Mesma garantia de read-only da 9B.4/9B.5, agora para o segundo
+        # caminho de admin também — não é suficiente só checar 200, tem
+        # que continuar sem nenhuma escrita. R2 mockado (mesmo padrão de
+        # ReportContentAndReadOnlyTests) para nunca depender de rede real.
+        user = make_regular_user("memoversebr@gmail.com")
+        client = auth_client(user)
+
+        mock_r2_client = MagicMock()
+        mock_r2_client.head_object.return_value = {}
+        mock_r2_client.list_objects_v2.return_value = {"Contents": [], "IsTruncated": False}
+
+        with patch(
+            "apps.experiences.management.commands.lifecycle_cleanup.r2_is_configured", return_value=True
+        ), patch(
+            "apps.experiences.management.commands.lifecycle_cleanup.get_r2_client", return_value=mock_r2_client
+        ), patch(
+            "apps.experiences.management.commands.lifecycle_cleanup.settings.R2_BUCKET_NAME", "test-bucket"
+        ):
+            with assert_no_writes():
+                response = client.get(CLEANUP_URL, {"check_r2": "true"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
 class MethodNotAllowedTests(TestCase):
@@ -296,8 +366,9 @@ class ReusesExactCommandLogicTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json(), fake_report)
         mock_build.assert_called_once_with(
-            draft_abandoned_days=10, payment_failed_days=30, media_failed_days=7,
-            r2_orphan_grace_days=30, stale_media_minutes=None, check_r2=True, r2_list_limit=5000,
+            draft_abandoned_days=10, draft_anonymous_unclaimed_hours=48, payment_failed_days=30,
+            media_failed_days=7, r2_orphan_grace_days=30, stale_media_minutes=None, check_r2=True,
+            r2_list_limit=5000,
         )
 
 

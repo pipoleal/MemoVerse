@@ -17,6 +17,7 @@ from rest_framework import serializers
 # protege contra um cliente (mesmo autenticado como admin) disparando uma
 # rajada de chamadas de rede reais (Mercado Pago / R2) num único GET.
 MAX_MINUTES = 10_080  # 7 dias
+MAX_HOURS = 8_760  # 1 ano
 MAX_DAYS = 3_650  # 10 anos
 MAX_PAYMENT_RECONCILE_LIMIT = 200
 MAX_R2_SAMPLE_LIMIT = 2_000
@@ -37,6 +38,9 @@ class PaymentReconcileQuerySerializer(serializers.Serializer):
 
 class LifecycleCleanupPreviewQuerySerializer(serializers.Serializer):
     draft_abandoned_days = serializers.IntegerField(required=False, min_value=0, max_value=MAX_DAYS, default=30)
+    draft_anonymous_unclaimed_hours = serializers.IntegerField(
+        required=False, min_value=0, max_value=MAX_HOURS, default=48
+    )
     payment_failed_days = serializers.IntegerField(required=False, min_value=0, max_value=MAX_DAYS, default=30)
     media_failed_days = serializers.IntegerField(required=False, min_value=0, max_value=MAX_DAYS, default=7)
     r2_orphan_grace_days = serializers.IntegerField(required=False, min_value=0, max_value=MAX_DAYS, default=30)

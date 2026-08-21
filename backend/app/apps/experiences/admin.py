@@ -27,6 +27,12 @@ class ExperienceDraftAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_filter = ("status", "theme")
     search_fields = ("id", "slug", "title", "recipient_name", "owner__email")
     ordering = ("-updated_at",)
+    # Etapa 10: claim_token nunca deve aparecer em lugar nenhum do admin —
+    # ReadOnlyAdminMixin já impede edição, mas sem excluir explicitamente o
+    # campo apareceria (visível, não editável) na página de detalhe, já que
+    # ModelAdmin mostra todo campo do model por padrão quando fields/exclude
+    # não é declarado.
+    exclude = ("claim_token",)
 
 
 @admin.register(Media)

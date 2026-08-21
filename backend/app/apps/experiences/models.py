@@ -49,11 +49,30 @@ class ExperienceDraft(models.Model):
         PUBLISHED = "published", "Publicado"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # null=True (Etapa 10): um draft anônimo (criado por um visitante sem
+    # conta, ver views.DraftListCreateView.post) começa com owner=None e
+    # claim_token preenchido. Vira permanentemente não-nulo assim que
+    # views.DraftClaimView reivindica o draft para um usuário autenticado —
+    # nenhum código depois desse ponto (checkout, publicação) precisa saber
+    # que este campo já foi nulo um dia, porque só é alcançável através de
+    # get_owned_draft_or_404 (que já exige owner=request.user).
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="experience_drafts",
+        null=True,
+        blank=True,
     )
+    # Token opaco de posse temporária (Etapa 10) — só é não-nulo enquanto
+    # owner for None. Gerado com secrets.token_urlsafe(32) (256 bits) em
+    # views.DraftListCreateView.post, nunca reaproveitado, nunca derivado de
+    # e-mail/IP/sessão. Apagado (None) no instante em que o draft é
+    # reivindicado (views.DraftClaimView) — mesmo que vaze depois de
+    # reivindicado, não abre acesso a nada. unique=True também serve de
+    # índice para o lookup em get_accessible_draft_or_404. NUNCA incluído em
+    # ExperienceDraftSerializer nem em ExperienceDraftAdmin (ver admin.py) —
+    # só aparece uma vez, no corpo da resposta de criação anônima.
+    claim_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.DRAFT)
     # Gerado só na primeira publicação (nunca antes, nunca a partir de
     # título/dado editável) — ver apps.experiences.services.publication_service.
