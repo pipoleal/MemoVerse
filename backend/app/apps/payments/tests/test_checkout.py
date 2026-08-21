@@ -1068,7 +1068,16 @@ class CheckoutFailureHandlingTests(TestCase):
         draft.refresh_from_db()
         self.assertNotEqual(draft.status, ExperienceDraft.Status.PAID)
         self.assertNotEqual(draft.status, ExperienceDraft.Status.PUBLISHED)
-        self.assertEqual(draft.status, ExperienceDraft.Status.DRAFT)
+        # Etapa 9B.3: antes desta correção, este teste afirmava
+        # ExperienceDraft.Status.DRAFT aqui — ou seja, encodava o próprio
+        # bug (Payment ativo criado, Draft nunca avançado) como
+        # comportamento esperado. checkout_service._create_attempt agora
+        # grava Payment + Draft=AWAITING_PAYMENT na MESMA transação, antes
+        # de qualquer chamada de rede à Mercado Pago — uma falha de
+        # gateway não deixa mais o Draft para trás. Ver Etapa 9B.2 (causa
+        # raiz) e o invariante checado por
+        # apps.experiences.management.commands.lifecycle_inventory.
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
 
     def test_mp_failure_leaves_payment_pending_without_order_id(self):
         user = make_user()
@@ -1080,6 +1089,91 @@ class CheckoutFailureHandlingTests(TestCase):
         payment = Payment.objects.get(draft=draft)
         self.assertEqual(payment.status, Payment.Status.PENDING)
         self.assertIsNone(payment.mp_order_id)
+
+    def test_mp_failure_on_first_ever_attempt_does_not_trigger_lifecycle_invariant(self):
+        """Regressão direta da Etapa 9B.2: reproduz exatamente o caso achado
+        em banco de dev (draft nunca tocado de novo, Payment pending sem
+        mp_order_id) e prova, usando a MESMA query do invariante do
+        lifecycle_inventory, que ele não dispara mais."""
+
+        user = make_user()
+        draft = make_draft(user)
+
+        with patch_mp_client(raise_error=True):
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+
+        inconsistent = (
+            Payment.objects.filter(status__in=Payment.ACTIVE_STATUSES)
+            .exclude(draft__status=ExperienceDraft.Status.AWAITING_PAYMENT)
+            .count()
+        )
+        self.assertEqual(inconsistent, 0)
+
+    def test_mp_failure_after_previous_terminal_failure_does_not_leave_draft_at_payment_failed(self):
+        """Segundo caso do bug original: retry depois de uma tentativa já
+        terminal (Draft=PAYMENT_FAILED) que também falha na Mercado Pago —
+        o Draft não pode ficar preso em PAYMENT_FAILED com um Payment ativo."""
+
+        user = make_user()
+        draft = make_draft(user, status=ExperienceDraft.Status.PAYMENT_FAILED)
+        make_payment(
+            draft=draft, plan=Plan.objects.get(code="weekly"), attempt_number=1,
+            status=Payment.Status.REJECTED, mp_order_id="ORD-OLD-REJECTED",
+        )
+
+        with patch_mp_client(raise_error=True):
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+        new_payment = Payment.objects.get(draft=draft, attempt_number=2)
+        self.assertEqual(new_payment.status, Payment.Status.PENDING)
+        self.assertIsNone(new_payment.mp_order_id)
+
+    def test_config_failure_also_advances_draft_to_awaiting_payment(self):
+        """CheckoutGatewayError pode vir de dois pontos distintos em
+        start_checkout: falha ao CONSTRUIR o MercadoPagoClient (token
+        ausente/inválido — este teste) ou falha na chamada create_order
+        (testes acima). Os dois precisam do mesmo comportamento corrigido."""
+
+        user = make_user()
+        draft = make_draft(user)
+
+        with patch(
+            "apps.payments.services.checkout_service.MercadoPagoClient",
+            side_effect=MercadoPagoConfigurationError("MP_ACCESS_TOKEN não configurado."),
+        ):
+            response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, ExperienceDraft.Status.AWAITING_PAYMENT)
+
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.status, Payment.Status.PENDING)
+        self.assertIsNone(payment.mp_order_id)
+
+    def test_payment_creation_and_draft_status_update_are_truly_atomic(self):
+        """Não basta o estado final bater — prova que as duas escritas
+        (Payment.objects.create e draft.save) vivem na MESMA transação: se
+        o save do Draft falhar, o Payment recém-criado precisa desaparecer
+        junto (rollback), nunca sobrar sozinho no banco."""
+
+        user = make_user()
+        draft = make_draft(user)
+
+        with patch(
+            "apps.experiences.models.ExperienceDraft.save",
+            side_effect=RuntimeError("falha simulada no save do draft"),
+        ):
+            with self.assertRaises(RuntimeError):
+                CheckoutService.start_checkout(draft=draft, plan=Plan.objects.get(code="weekly"))
+
+        self.assertFalse(Payment.objects.filter(draft=draft).exists())
 
     def test_retry_after_transient_failure_does_not_duplicate_the_payment_and_reuses_the_idempotency_key(self):
         user = make_user()

@@ -204,7 +204,7 @@ class CheckoutService:
                 if active_payment is not None:
                     return CheckoutService._reuse_or_conflict(active_payment, plan)
 
-                return CheckoutService._create_attempt(draft=draft, plan=plan)
+                return CheckoutService._create_attempt(draft=locked_draft, plan=plan)
         except IntegrityError:
             # Última linha de defesa: duas requisições venceram a checagem acima
             # (backend sem locking real de linha) e colidiram na constraint
@@ -232,7 +232,7 @@ class CheckoutService:
         # recalculado a partir do preço atual do Plan.
         amount = plan.price
 
-        return Payment.objects.create(
+        payment = Payment.objects.create(
             draft=draft,
             owner=draft.owner,
             plan=plan,
@@ -248,6 +248,24 @@ class CheckoutService:
             # em ~41-42 chars (draft.id sozinho já ocupa 36), com folga.
             idempotency_key=f"mv:{draft.id}:{next_attempt}",
         )
+
+        # Etapa 9B.3: esta transição precisa ser atômica com a criação do
+        # Payment (mesma transação/lock de _get_or_create_active_payment —
+        # `draft` aqui é sempre o `locked_draft` já sob select_for_update),
+        # e não pode depender de a chamada de rede à Mercado Pago
+        # (_create_order, que roda DEPOIS, fora desta transação) ter
+        # sucesso. Antes desta correção, uma falha entre a criação do
+        # Payment e essa chamada de rede (CheckoutGatewayError — token
+        # ausente, timeout, 5xx da MP) deixava o Payment ativo criado aqui
+        # com o Draft parado no status anterior (draft/payment_failed),
+        # violando o invariante checado por
+        # apps.experiences.management.commands.lifecycle_inventory
+        # ("Payment ativo com draft fora de AWAITING_PAYMENT"). Ver
+        # Etapa 9B.2 para o caso real reproduzido em banco de dev.
+        draft.status = ExperienceDraft.Status.AWAITING_PAYMENT
+        draft.save(update_fields=["status", "updated_at"])
+
+        return payment
 
     @staticmethod
     def _create_order(
@@ -306,14 +324,13 @@ class CheckoutService:
         payment.last_sync_payload = result.raw
         payment.save(update_fields=["mp_order_id", "mp_payment_id", "last_sync_payload", "updated_at"])
 
-        # Pix normalmente volta action_required nesta resposta síncrona
-        # (nunca aprovado aqui, ver _payer_email_for/payer_first_name) — o
-        # Draft precisa refletir "pagamento em andamento" mesmo antes de
-        # qualquer confirmação. A chamada abaixo só avança o Draft além
-        # disso quando o resultado já vier aprovado (cartão); para Pix é
-        # um no-op e o Draft permanece exatamente aqui.
-        draft.status = ExperienceDraft.Status.AWAITING_PAYMENT
-        draft.save(update_fields=["status", "updated_at"])
+        # Draft já está em AWAITING_PAYMENT desde a criação do Payment (ver
+        # _create_attempt, Etapa 9B.3) — nenhuma escrita de status precisa
+        # acontecer aqui. A única exceção (cartão já aprovado nesta mesma
+        # resposta síncrona) é tratada abaixo por
+        # PaymentConfirmationService.confirm_from_result, que avança o
+        # Draft além disso (para PAID) quando for o caso; para Pix é um
+        # no-op e o Draft permanece em AWAITING_PAYMENT.
 
         # Confirmação síncrona: se a Mercado Pago já respondeu aprovado
         # (cartão), aplica Payment=APPROVED/Draft=PAID agora, sem esperar o

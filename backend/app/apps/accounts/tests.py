@@ -413,3 +413,75 @@ class LogoutTests(TestCase):
             REFRESH_URL, {"refresh": new_refresh}, format="json"
         )
         self.assertEqual(second_rotation.status_code, status.HTTP_200_OK)
+
+
+ME_URL = "/api/auth/me/"
+
+
+class MeViewTests(TestCase):
+    """Etapa 9B.5: /api/auth/me/ é a única fonte de verdade para o
+    frontend saber se o usuário logado é admin (is_superuser) — o token
+    JWT em si nunca carrega isso (LoginSerializer/RefreshView são os
+    padrões do SimpleJWT, sem custom claims)."""
+
+    def setUp(self):
+        self.client = APIClient()
+
+    def _authed_client_for(self, user):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        client = APIClient()
+        token = RefreshToken.for_user(user)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token.access_token}")
+        return client
+
+    def test_anonymous_gets_401(self):
+        response = self.client.get(ME_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_regular_user_sees_own_profile_with_is_superuser_false(self):
+        user = User.objects.create_user(
+            email="user@example.com", first_name="Ana", last_name="Silva", password="strong-pass-123"
+        )
+        response = self._authed_client_for(user).get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], str(user.id))
+        self.assertEqual(response.data["email"], "user@example.com")
+        self.assertEqual(response.data["first_name"], "Ana")
+        self.assertEqual(response.data["last_name"], "Silva")
+        self.assertIs(response.data["is_superuser"], False)
+
+    def test_superuser_sees_is_superuser_true(self):
+        admin = User.objects.create_user(
+            email="admin@example.com", first_name="Admin", last_name="User",
+            password="strong-pass-123", is_staff=True, is_superuser=True,
+        )
+        response = self._authed_client_for(admin).get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIs(response.data["is_superuser"], True)
+
+    def test_staff_without_superuser_still_sees_is_superuser_false(self):
+        # Mesmo perfil de conta técnica usado pelo sandbox-apro-runner —
+        # is_staff=True sozinho nunca deve aparecer como admin aqui.
+        staff = User.objects.create_user(
+            email="staff@example.com", first_name="Staff", last_name="User",
+            password="strong-pass-123", is_staff=True, is_superuser=False,
+        )
+        response = self._authed_client_for(staff).get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIs(response.data["is_superuser"], False)
+
+    def test_never_reveals_another_users_data(self):
+        User.objects.create_user(
+            email="other@example.com", first_name="Other", last_name="Person", password="strong-pass-123"
+        )
+        me = User.objects.create_user(
+            email="me@example.com", first_name="Me", last_name="Myself", password="strong-pass-123"
+        )
+        response = self._authed_client_for(me).get(ME_URL)
+
+        self.assertEqual(response.data["email"], "me@example.com")
+        self.assertNotEqual(response.data["email"], "other@example.com")

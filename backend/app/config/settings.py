@@ -64,6 +64,9 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.experiences",
     "apps.payments",
+    # Etapa 9B.4: painel administrativo read-only temporário (ver
+    # apps/ops/__init__.py) — sem models, sem migrations.
+    "apps.ops",
     "rest_framework",
     # Etapa 8: já é submódulo do djangorestframework-simplejwt já instalado
     # (nenhuma dependência nova) — dá a LogoutView um lugar real para
