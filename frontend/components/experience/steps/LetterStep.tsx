@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { useExperience } from "../context/ExperienceContext";
 import FadeIn from "../../animations/FadeIn";
+import { getThemeVisual } from "@/lib/themeRegistry";
 
 const MAX_CHARACTERS = 3000;
 
@@ -9,6 +12,14 @@ export default function LetterStep() {
   const { experience, updateExperience } = useExperience();
 
   const characters = experience.letter.length;
+
+  // Mesmo registry que LetterChapter.tsx usa na experiência publicada — a
+  // prévia aqui no wizard precisa bater com o resultado final, nunca um
+  // sistema de estilo próprio (ver themeRegistry.ts).
+  const letterTheme = useMemo(
+    () => getThemeVisual(experience.theme).letter,
+    [experience.theme]
+  );
 
   function handleLetterChange(
     event: React.ChangeEvent<HTMLTextAreaElement>
@@ -102,40 +113,46 @@ export default function LetterStep() {
             </p>
           </div>
 
-          {/* Preview */}
-          <div className="relative overflow-hidden rounded-3xl border border-yellow-400/20 bg-linear-to-br from-yellow-400/10 via-white/5 to-transparent p-8 backdrop-blur-xl">
-            <div className="absolute -right-20 -top-20 h-48 w-48 rounded-full bg-yellow-400/10 blur-3xl" />
+          {/* Preview — mesmo visual (cores, ornamentos, fonte) que
+              LetterChapter.tsx renderiza na experiência publicada, via
+              letterTheme acima. Layout de wizard (estático, sem as
+              animações de entrada/botão "Continuar" da versão final), mas
+              nunca um estilo inventado à parte. */}
+          <div className={`relative overflow-hidden rounded-3xl border p-8 ${letterTheme.backdropClass}`}>
+            <div className={`pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full blur-3xl ${letterTheme.glowClass}`} />
 
             <div className="relative">
-              <span className="text-sm font-semibold uppercase tracking-[0.3em] text-yellow-400">
+              <span className={`text-sm font-semibold uppercase tracking-[0.3em] ${letterTheme.secondaryClass}`}>
                 Prévia
               </span>
 
-              <div className="mt-8 rounded-2xl border border-white/10 bg-black/20 p-7">
+              <div className={`mt-8 rounded-2xl border p-7 backdrop-blur-xl ${letterTheme.cardClass}`}>
                 <div className="text-3xl">
                   💌
                 </div>
 
-                <h2 className="mt-5 text-2xl font-bold text-white">
+                <h2 className={`mt-5 text-2xl font-light tracking-wide ${letterTheme.primaryClass}`}>
                   Uma carta para{" "}
                   {experience.recipient || "alguém especial"}
                 </h2>
 
-                <div className="mt-6 min-h-48 whitespace-pre-wrap text-base leading-7 text-slate-300">
+                <div className={`mx-0 my-6 h-px w-16 ${letterTheme.ornamentClass}`} />
+
+                <div className={`min-h-48 whitespace-pre-wrap text-base leading-7 ${letterTheme.textClass}`}>
                   {experience.letter ? (
                     experience.letter
                   ) : (
-                    <span className="text-slate-600">
+                    <span className={letterTheme.secondaryClass}>
                       Sua carta aparecerá aqui enquanto você escreve...
                     </span>
                   )}
                 </div>
                 <div className="mt-8 border-t border-white/10 pt-5">
-                <p className="text-sm text-slate-500">
+                <p className={`text-sm ${letterTheme.secondaryClass}`}>
                     Mais uma memória para guardar para sempre. ⭐
                 </p>
 
-                <p className="mt-3 text-lg font-semibold text-white">
+                <p className={`mt-3 text-lg ${letterTheme.primaryClass}`}>
                     {experience.creator || "Seu nome"} ❤️
                 </p>
                 </div>
