@@ -10,7 +10,7 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "not_found" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; experience: Experience };
+  | { kind: "ready"; experience: Experience; isOwner: boolean };
 
 export default function PublicExperienceView({ slug }: { slug: string }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -31,7 +31,7 @@ export default function PublicExperienceView({ slug }: { slug: string }) {
     fetchPublicExperience(slug)
       .then((data) => {
         if (cancelled) return;
-        setState({ kind: "ready", experience: toExperience(data) });
+        setState({ kind: "ready", experience: toExperience(data), isOwner: data.viewer_can_manage });
       })
       .catch((error) => {
         if (cancelled) return;
@@ -89,5 +89,5 @@ export default function PublicExperienceView({ slug }: { slug: string }) {
     );
   }
 
-  return <ExperienceViewer experience={state.experience} />;
+  return <ExperienceViewer experience={state.experience} isOwner={state.isOwner} />;
 }

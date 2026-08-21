@@ -24,10 +24,11 @@ function SidebarLink({ href, icon, label, active }: { href: string; icon: string
   );
 }
 
-// Not a link — no route exists yet for either of these (Minha Galáxia /
-// Galáxia Viva), and the product decision is explicit: preparado
-// visualmente, nunca navegação falsa. `badgeClassName` lets the two read as
-// visually distinct (soon vs. premium) without a third component.
+// Not a link — no route exists yet for "Galáxia Viva" (the separate,
+// premium concept), and the product decision is explicit: preparado
+// visualmente, nunca navegação falsa. "Minha Galáxia" graduated to a real
+// SidebarLink below once /dashboard/galaxia was built. `badgeClassName`
+// lets a prepared item read as visually distinct from an active link.
 function SidebarPreparedItem({
   icon,
   label,
@@ -88,11 +89,11 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
         <nav className="flex flex-1 flex-col gap-1 px-4">
           <SidebarLink href="/dashboard" icon="🏠" label="Dashboard" active={pathname === "/dashboard"} />
 
-          <SidebarPreparedItem
+          <SidebarLink
+            href="/dashboard/galaxia"
             icon="🌌"
             label="Minha Galáxia"
-            badge="EM BREVE"
-            badgeClassName="bg-white/10 text-slate-300"
+            active={pathname === "/dashboard/galaxia"}
           />
 
           <SidebarPreparedItem

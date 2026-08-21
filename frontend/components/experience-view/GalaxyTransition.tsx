@@ -1,0 +1,372 @@
+"use client";
+
+import { useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
+
+type GalaxyPhase =
+  | "planet"
+  | "particles"
+  | "galaxy"
+  | "message";
+
+type GalaxyTransitionProps = {
+  active: boolean;
+  phase: GalaxyPhase;
+};
+
+const PARTICLE_COUNT = 8000;
+
+export default function GalaxyTransition({
+  active,
+  phase,
+}: GalaxyTransitionProps) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const materialRef =
+    useRef<THREE.PointsMaterial>(null);
+
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(
+      PARTICLE_COUNT * 3
+    );
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const index = i * 3;
+
+      /*
+       * Valores determinísticos.
+       */
+      const seedA =
+        Math.sin(i * 12.9898) *
+        43758.5453;
+
+      const seedB =
+        Math.sin(i * 78.233) *
+        43758.5453;
+
+      const seedC =
+        Math.sin(i * 45.164) *
+        43758.5453;
+
+      const randomA =
+        Math.abs(seedA % 1);
+
+      const randomB =
+        Math.abs(seedB % 1);
+
+      const randomC =
+        Math.abs(seedC % 1);
+
+      /*
+       * Nuvem inicial.
+       *
+       * É essa nuvem que queremos
+       * preservar porque ela ficou
+       * bonita no seu vídeo.
+       */
+      const radius =
+        0.35 + randomA * 2.0;
+
+      const angle =
+        randomB *
+        Math.PI *
+        2;
+
+      positions[index] =
+        Math.cos(angle) *
+        radius;
+
+      positions[index + 1] =
+        (randomC - 0.5) *
+        1.4;
+
+      positions[index + 2] =
+        Math.sin(angle) *
+        radius;
+    }
+
+    const geometry =
+      new THREE.BufferGeometry();
+
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(
+        positions,
+        3
+      )
+    );
+
+    return geometry;
+  }, []);
+
+  useFrame((_, delta) => {
+    if (!pointsRef.current) {
+      return;
+    }
+
+    const material =
+      materialRef.current;
+
+    /*
+     * Antes de começar.
+     */
+    if (!active) {
+      if (material) {
+        material.opacity = 0;
+      }
+
+      return;
+    }
+
+    /*
+     * =================================
+     * OPACIDADE
+     * =================================
+     */
+
+    let targetOpacity = 0;
+
+    if (phase === "particles") {
+      targetOpacity = 0.85;
+    }
+
+    if (phase === "galaxy") {
+      targetOpacity = 1;
+    }
+
+    if (phase === "message") {
+      targetOpacity = 0.75;
+    }
+
+    if (material) {
+      material.opacity +=
+        (targetOpacity -
+          material.opacity) *
+        Math.min(delta * 2, 1);
+    }
+
+    /*
+     * =================================
+     * VELOCIDADE
+     * =================================
+     */
+
+    let rotationSpeed = 0;
+
+    if (phase === "particles") {
+      rotationSpeed = 0.025;
+    }
+
+    if (phase === "galaxy") {
+      rotationSpeed = 0.045;
+    }
+
+    if (phase === "message") {
+      rotationSpeed = 0.012;
+    }
+
+    pointsRef.current.rotation.y +=
+      delta * rotationSpeed;
+
+    /*
+     * =================================
+     * PARTÍCULAS
+     * =================================
+     */
+
+    const positionAttribute =
+      pointsRef.current.geometry.getAttribute(
+        "position"
+      ) as THREE.BufferAttribute;
+
+    const positions =
+      positionAttribute.array as Float32Array;
+
+    const time =
+      performance.now() * 0.001;
+
+    for (
+      let i = 0;
+      i < PARTICLE_COUNT;
+      i++
+    ) {
+      const index = i * 3;
+
+      let x = positions[index];
+      let y =
+        positions[index + 1];
+      let z =
+        positions[index + 2];
+
+      const radius =
+        Math.sqrt(
+          x * x +
+          z * z
+        );
+
+      if (radius < 0.02) {
+        continue;
+      }
+
+      const angle =
+        Math.atan2(z, x);
+
+      /*
+       * =================================
+       * FASE 1 / 2
+       * =================================
+       *
+       * Movimento orbital suave.
+       */
+      if (
+        phase === "particles"
+      ) {
+        const speed =
+          0.10 /
+          Math.max(
+            radius,
+            0.35
+          );
+
+        const nextAngle =
+          angle +
+          speed *
+          delta;
+
+        const targetX =
+          Math.cos(
+            nextAngle
+          ) *
+          radius;
+
+        const targetZ =
+          Math.sin(
+            nextAngle
+          ) *
+          radius;
+
+        x +=
+          (targetX - x) *
+          delta *
+          2;
+
+        z +=
+          (targetZ - z) *
+          delta *
+          2;
+      }
+
+      /*
+       * =================================
+       * FASE 3 / 4 / 5
+       * =================================
+       *
+       * Começamos a puxar as
+       * partículas para uma
+       * estrutura espiral.
+       */
+      if (
+        phase === "galaxy" ||
+        phase === "message"
+      ) {
+        /*
+         * Quanto mais longe,
+         * maior a curvatura.
+         */
+        const spiralAngle =
+          angle +
+          radius *
+          0.75;
+
+        /*
+         * Pequena variação para
+         * evitar uma forma perfeita.
+         */
+        const distortion =
+          Math.sin(
+            i * 0.37
+          ) *
+          0.12;
+
+        const targetAngle =
+          spiralAngle +
+          distortion;
+
+        /*
+         * Mantemos a distância
+         * relativamente estável.
+         */
+        const targetRadius =
+          radius;
+
+        const targetX =
+          Math.cos(
+            targetAngle
+          ) *
+          targetRadius;
+
+        const targetZ =
+          Math.sin(
+            targetAngle
+          ) *
+          targetRadius;
+
+        /*
+         * Movimento para a
+         * nova posição.
+         */
+        x +=
+          (targetX - x) *
+          delta *
+          1.8;
+
+        z +=
+          (targetZ - z) *
+          delta *
+          1.8;
+
+        /*
+         * Achatamento gradual.
+         */
+        y +=
+          -y *
+          delta *
+          0.35;
+
+        /*
+         * Pequena ondulação.
+         */
+        y +=
+          Math.sin(
+            time * 0.5 +
+            radius +
+            i * 0.01
+          ) *
+          0.002;
+      }
+
+      positions[index] = x;
+      positions[index + 1] = y;
+      positions[index + 2] = z;
+    }
+
+    positionAttribute.needsUpdate = true;
+  });
+
+  return (
+    <points
+      ref={pointsRef}
+      geometry={geometry}
+    >
+      <pointsMaterial
+        ref={materialRef}
+        color={0xffffff}
+        size={0.018}
+        transparent
+        opacity={0}
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+}

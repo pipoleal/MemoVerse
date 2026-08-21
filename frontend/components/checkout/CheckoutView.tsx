@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import CardPaymentBlock from "./CardPaymentBlock";
 import {
@@ -580,8 +581,23 @@ type PublishPhase =
   | { kind: "error"; message: string };
 
 function ApprovedBlock({ draftId }: { draftId: string }) {
+  const router = useRouter();
   const [publishPhase, setPublishPhase] = useState<PublishPhase>({ kind: "idle" });
-  const [linkCopyFeedback, setLinkCopyFeedback] = useState<"idle" | "copied" | "failed">("idle");
+
+  // Etapa Galáxia: publicar não termina mais numa caixa de link com "Abrir
+  // experiência" em nova aba — o criador entra direto, na mesma aba, na
+  // experiência que acabou de publicar (mesma rota pública /e/[slug] que
+  // qualquer destinatário usaria; viewer_can_manage no backend garante que
+  // só ele vê "Conhecer sua galáxia" no fim — ver GalaxyChapter.tsx).
+  // Pequeno atraso só para a mensagem "Experiência publicada!" ser lida
+  // antes da navegação, não uma espera funcional.
+  useEffect(() => {
+    if (publishPhase.kind !== "published") return;
+    const redirectTimer = window.setTimeout(() => {
+      router.push(`/e/${publishPhase.slug}`);
+    }, 1200);
+    return () => window.clearTimeout(redirectTimer);
+  }, [publishPhase, router]);
 
   async function handlePublish() {
     // Guards against a double click firing two requests — once published,
@@ -605,21 +621,6 @@ function ApprovedBlock({ draftId }: { draftId: string }) {
       // approved-payment state (this component even being rendered) is
       // entirely unaffected by a publish error.
       setPublishPhase({ kind: "error", message: extractPublishErrorMessage(error) });
-    }
-  }
-
-  const publicUrl = publishPhase.kind === "published" ? `${window.location.origin}/e/${publishPhase.slug}` : null;
-
-  async function copyPublicLink() {
-    if (!publicUrl) return;
-
-    try {
-      await navigator.clipboard.writeText(publicUrl);
-      setLinkCopyFeedback("copied");
-    } catch {
-      setLinkCopyFeedback("failed");
-    } finally {
-      setTimeout(() => setLinkCopyFeedback("idle"), 2500);
     }
   }
 
@@ -663,45 +664,24 @@ function ApprovedBlock({ draftId }: { draftId: string }) {
         </div>
       )}
 
-      {publishPhase.kind === "published" && publicUrl && (
-        <div className="mt-2 flex w-full flex-col items-center gap-3">
+      {publishPhase.kind === "published" && (
+        <div className="mt-2 flex flex-col items-center gap-3">
           <p className="text-sm font-semibold text-green-300">✨ Experiência publicada!</p>
-
-          <div className="w-full break-all rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-            {publicUrl}
+          <div className="flex items-center gap-3 text-sm text-slate-300">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-yellow-400/30 border-t-yellow-400" />
+            Entrando na sua galáxia...
           </div>
-
-          <div className="flex w-full flex-col gap-3 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => void copyPublicLink()}
-              className="flex-1 rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-[1.02] active:scale-95"
-            >
-              {linkCopyFeedback === "copied" ? "✓ Link copiado" : "Copiar link"}
-            </button>
-
-            <a
-              href={publicUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
-            >
-              Abrir experiência
-            </a>
-          </div>
-
-          {linkCopyFeedback === "failed" && (
-            <p className="text-xs text-red-300">Não foi possível copiar automaticamente. Selecione o link acima manualmente.</p>
-          )}
         </div>
       )}
 
-      <a
-        href="/dashboard"
-        className="mt-2 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
-      >
-        Ir para o Dashboard
-      </a>
+      {publishPhase.kind !== "published" && (
+        <a
+          href="/dashboard"
+          className="mt-2 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
+        >
+          Ir para o Dashboard
+        </a>
+      )}
     </div>
   );
 }

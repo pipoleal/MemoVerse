@@ -277,6 +277,9 @@ class PublicExperienceView(APIView):
             "music": {"provider": draft.music_provider, "url": draft.music_url},
             "media": media_items,
             "published_at": draft.published_at,
+            "viewer_can_manage": bool(
+                request.user.is_authenticated and draft.owner_id == request.user.id
+            ),
         }
         return Response(PublicExperienceSerializer(response_data).data)
 

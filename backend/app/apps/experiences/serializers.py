@@ -120,6 +120,13 @@ class PublicExperienceSerializer(serializers.Serializer):
     music = PublicMusicSerializer()
     media = PublicMediaSerializer(many=True)
     published_at = serializers.DateTimeField()
+    # Etapa Galáxia: true só para o dono autenticado vendo sua própria
+    # experiência publicada — nunca revela quem é o dono (nome/e-mail/id),
+    # só um booleano relativo a QUEM está pedindo. Controla exclusivamente
+    # se o botão "Conhecer sua galáxia" aparece no fim da jornada (ver
+    # GalaxyChapter.tsx) — um visitante/destinatário sem conta, ou logado
+    # como outro usuário, sempre recebe False aqui.
+    viewer_can_manage = serializers.BooleanField()
 
 
 class UploadIntentSerializer(serializers.Serializer):

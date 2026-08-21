@@ -26,6 +26,12 @@ export type PublicExperienceResponse = {
   music: { provider: string; url: string };
   media: PublicMedia[];
   published_at: string;
+  // True only for the authenticated owner viewing their own published
+  // experience — controls whether GalaxyChapter shows "Conhecer sua
+  // galáxia" (see PublicExperienceView.tsx). Deliberately not part of
+  // Experience/toExperience below: it describes the viewer, not the
+  // experience itself.
+  viewer_can_manage: boolean;
 };
 
 export async function fetchPublicExperience(slug: string): Promise<PublicExperienceResponse> {

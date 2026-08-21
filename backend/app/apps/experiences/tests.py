@@ -968,9 +968,25 @@ class PublicExperienceViewTests(TestCase):
             {
                 "slug", "title", "experience_type", "theme", "recipient_name",
                 "creator_name", "event_date", "letter", "short_message",
-                "music", "media", "published_at",
+                "music", "media", "published_at", "viewer_can_manage",
             },
         )
+
+    def test_anonymous_viewer_can_manage_is_false(self):
+        with self._patch_presigned_url():
+            response = APIClient().get(public_url(self.draft.slug))
+        self.assertFalse(response.data["viewer_can_manage"])
+
+    def test_owner_viewer_can_manage_is_true(self):
+        with self._patch_presigned_url():
+            response = auth_client(self.owner).get(public_url(self.draft.slug))
+        self.assertTrue(response.data["viewer_can_manage"])
+
+    def test_other_authenticated_user_viewer_can_manage_is_false(self):
+        other_user = make_user("other-viewer@example.com")
+        with self._patch_presigned_url():
+            response = auth_client(other_user).get(public_url(self.draft.slug))
+        self.assertFalse(response.data["viewer_can_manage"])
 
 
 class PublicExperienceViewExpirationTests(TestCase):

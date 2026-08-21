@@ -44,9 +44,16 @@ type ExperienceViewerProps = {
   // ExperienceProvider is then required, same as today.
   experience?: Experience;
   onCompleted?: () => void;
+  // Controls whether GalaxyChapter's "Conhecer sua galáxia" button is shown
+  // (see that component) — true by default because the wizard/checkout mode
+  // above (no `experience` prop, context-driven) only ever renders for the
+  // authenticated draft owner. The public page (`experience` prop set, see
+  // PublicExperienceView.tsx) always passes this explicitly, since a
+  // visitor there may or may not be the owner.
+  isOwner?: boolean;
 };
 
-export default function ExperienceViewer({ experience: experienceProp, onCompleted }: ExperienceViewerProps) {
+export default function ExperienceViewer({ experience: experienceProp, onCompleted, isOwner = true }: ExperienceViewerProps) {
   // useOptionalExperience (not useExperience) never throws when there is no
   // Provider — required so the prop-driven mode above can mount without one.
   const context = useOptionalExperience();
@@ -234,7 +241,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
             exit={{ opacity: 0 }}
             transition={CHAPTER_TRANSITION}
           >
-            <GalaxyChapter onRevive={handleRevive} />
+            <GalaxyChapter onRevive={handleRevive} isOwner={isOwner} />
           </motion.div>
         )}
       </AnimatePresence>
