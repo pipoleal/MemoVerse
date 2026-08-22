@@ -8,6 +8,9 @@ import { useInViewport } from "@/lib/useInViewport";
 
 type PhotoMemoryBeatProps = {
   src: string;
+  // Fase 2.2: opcional — "" (ou ausente) não reserva nenhum espaço visual,
+  // a foto renderiza exatamente como antes desta mudança.
+  caption?: string;
   index: number;
   total: number;
 };
@@ -68,7 +71,7 @@ const DUST = [
   ["84%", "78%", "0.4s", "3.4s"],
 ] as const;
 
-export default function PhotoMemoryBeat({ src, index, total }: PhotoMemoryBeatProps) {
+export default function PhotoMemoryBeat({ src, caption, index, total }: PhotoMemoryBeatProps) {
   const sectionRef = useRef<HTMLDivElement | null>(null);
 
   const { isInView: isNear } = useInViewport<HTMLDivElement>(
@@ -126,35 +129,53 @@ export default function PhotoMemoryBeat({ src, index, total }: PhotoMemoryBeatPr
 
       <div className={`relative flex w-full ${justify}`}>
         {isNear && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.94, filter: "blur(6px)" }}
-            whileInView={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-            viewport={{ once: true, amount: 0.4 }}
-            transition={{ duration: 0.9, ease: "easeOut" }}
-            style={{ y: imageY, rotate: composition.rotate }}
-            className={`relative w-full max-w-xl overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_30px_100px_rgba(0,0,0,0.55)] ${composition.aspect}`}
-          >
+          <div className="flex w-full max-w-xl flex-col gap-4">
             <motion.div
-              className="relative h-full w-full"
-              animate={{ scale: [1, 1.06] }}
-              transition={{ duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
+              initial={{ opacity: 0, scale: 0.94, filter: "blur(6px)" }}
+              whileInView={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+              viewport={{ once: true, amount: 0.4 }}
+              transition={{ duration: 0.9, ease: "easeOut" }}
+              style={{ y: imageY, rotate: composition.rotate }}
+              className={`relative w-full overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_30px_100px_rgba(0,0,0,0.55)] ${composition.aspect}`}
             >
-              <Image
-                src={src}
-                alt={`Memória ${index + 1}`}
-                fill
-                unoptimized
-                sizes="(max-width: 768px) 100vw, 640px"
-                className="object-cover"
-              />
+              <motion.div
+                className="relative h-full w-full"
+                animate={{ scale: [1, 1.06] }}
+                transition={{ duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
+              >
+                <Image
+                  src={src}
+                  alt={`Memória ${index + 1}`}
+                  fill
+                  unoptimized
+                  sizes="(max-width: 768px) 100vw, 640px"
+                  className="object-cover"
+                />
+              </motion.div>
+
+              <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/50 via-transparent to-black/10" />
+
+              <span className="pointer-events-none absolute bottom-4 right-5 text-xs font-medium uppercase tracking-[0.3em] text-white/50">
+                {String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}
+              </span>
             </motion.div>
 
-            <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/50 via-transparent to-black/10" />
-
-            <span className="pointer-events-none absolute bottom-4 right-5 text-xs font-medium uppercase tracking-[0.3em] text-white/50">
-              {String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}
-            </span>
-          </motion.div>
+            {/* Fase 2.2: legenda individual — nunca sobreposta à foto (é uma
+                irmã abaixo, não um overlay), e nunca uma legenda genérica de
+                galeria: pertence só a esta foto. Sem texto, nenhum espaço
+                extra é reservado. */}
+            {caption && (
+              <motion.p
+                initial={{ opacity: 0, y: 8 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.4 }}
+                transition={{ duration: 0.8, delay: 0.25, ease: "easeOut" }}
+                className="text-sm font-light italic leading-relaxed text-white/75 sm:text-base"
+              >
+                {caption}
+              </motion.p>
+            )}
+          </div>
         )}
       </div>
     </section>

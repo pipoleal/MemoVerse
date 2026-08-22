@@ -52,6 +52,9 @@ export type DraftMediaItem = {
   upload_status: "pending" | "uploaded" | "failed";
   sort_order: number;
   url: string | null;
+  // Fase 2.2: sempre presente (nunca ausente), "" quando não há legenda —
+  // mesmo padrão do restante do draft (short_message, context_answer).
+  caption: string;
 };
 
 export type DraftDetail = DraftPayload & {

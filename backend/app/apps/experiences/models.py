@@ -149,6 +149,14 @@ class Media(models.Model):
     )
     uploaded_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Fase 2.2: legenda individual, opcional — editada via MediaDeleteView.patch
+    # (a mesma view/URL do DELETE, ver views.py), nunca através do
+    # ExperienceDraftSerializer. blank=True sem null=True, mesmo padrão de
+    # short_message/context_answer em ExperienceDraft — mídia antiga lê "".
+    # 140 caracteres: curto o bastante para não desequilibrar o grid
+    # compacto de PhotosStep.tsx no mobile, com folga sobre os exemplos de
+    # produto (~30-55 caracteres).
+    caption = models.CharField(max_length=140, blank=True)
 
     class Meta:
         db_table = "experience_media"

@@ -32,7 +32,13 @@ class MediaSerializer(serializers.ModelSerializer):
         fields = (
             "id", "media_type", "original_filename", "mime_type", "size_bytes",
             "duration_seconds", "sort_order", "upload_status", "uploaded_at", "created_at", "url",
+            "caption",
         )
+        # Fase 2.2: caption é lido aqui (round-trip pro wizard ao reabrir um
+        # draft), mas nunca escrito por este serializer — a única forma de
+        # alterar é MediaDeleteView.patch() (ver views.py), que reaproveita a
+        # mesma autorização de get_accessible_draft_or_404/claim_token já
+        # usada por upload/delete, em vez de outro caminho de escrita.
         read_only_fields = fields
 
     def get_url(self, media: Media) -> str | None:
@@ -42,6 +48,15 @@ class MediaSerializer(serializers.ModelSerializer):
             return generate_presigned_read_url(media.storage_key)
         except ImproperlyConfigured:
             return None
+
+
+class MediaCaptionUpdateSerializer(serializers.Serializer):
+    """Corpo de PATCH /experiences/drafts/<draft_id>/media/<media_id>/ (ver
+    views.MediaDeleteView.patch) — só o campo que essa operação pode
+    alterar. allow_blank=True: "" é sempre um valor válido (representa
+    "sem legenda"), nunca um erro de validação."""
+
+    caption = serializers.CharField(max_length=140, allow_blank=True, required=True)
 
 
 class ExperienceDraftSerializer(serializers.ModelSerializer):
@@ -93,6 +108,10 @@ class PublicMediaSerializer(serializers.Serializer):
     url = serializers.CharField()
     original_filename = serializers.CharField()
     sort_order = serializers.IntegerField()
+    # Fase 2.2: string livre, sempre renderizada como texto React puro do
+    # lado do frontend (nunca dangerouslySetInnerHTML) — nada aqui precisa
+    # de sanitização adicional além do escaping padrão do DRF/React.
+    caption = serializers.CharField()
 
 
 class PublicMusicSerializer(serializers.Serializer):

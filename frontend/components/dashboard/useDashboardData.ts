@@ -18,6 +18,7 @@ export type DraftMedia = {
   uploaded_at: string | null;
   created_at: string;
   url: string | null;
+  caption: string;
 };
 
 export type DraftStatus = "draft" | "awaiting_payment" | "payment_failed" | "paid" | "published";

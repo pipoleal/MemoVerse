@@ -22,6 +22,7 @@ from rest_framework.views import APIView
 from .models import ExperienceDraft, Media, Theme
 from .serializers import (
     ExperienceDraftSerializer,
+    MediaCaptionUpdateSerializer,
     PublicExperienceSerializer,
     PublishResponseSerializer,
     ThemeSerializer,
@@ -261,6 +262,7 @@ class PublicExperienceView(APIView):
                     "url": url,
                     "original_filename": media.original_filename,
                     "sort_order": media.sort_order,
+                    "caption": media.caption,
                 }
             )
 
@@ -369,9 +371,10 @@ class MediaUploadCompleteView(APIView):
 
 
 class MediaDeleteView(APIView):
-    """DELETE /api/experiences/drafts/<uuid:draft_id>/media/<uuid:media_id>/
+    """DELETE, PATCH /api/experiences/drafts/<uuid:draft_id>/media/<uuid:media_id>/
 
-    Remove uma mídia (em qualquer upload_status) do draft do usuário.
+    DELETE remove uma mídia (em qualquer upload_status) do draft do
+    usuário.
 
     Best-effort quanto ao R2 (ver storage.delete_object): uma falha ao
     remover o objeto do bucket nunca impede a remoção do registro — o
@@ -380,11 +383,15 @@ class MediaDeleteView(APIView):
     nunca é servido a ninguém: generate_presigned_read_url só é chamado
     para mídia com upload_status=UPLOADED referenciada por um draft
     PUBLISHED.
+
+    PATCH (Fase 2.2) atualiza só a legenda (caption) da mídia — mesma
+    view/URL/autorização do DELETE, de propósito: não existe uma segunda
+    estrutura de autorização pra mídia, só mais um verbo na mesma view.
     """
 
     # Etapa 10: mesmo raciocínio de MediaUploadIntentView — visitante
-    # anônimo pode remover a própria mídia (do próprio draft ainda não
-    # reivindicado) antes de ter conta.
+    # anônimo pode remover (ou, desde a Fase 2.2, legendar) a própria
+    # mídia (do próprio draft ainda não reivindicado) antes de ter conta.
     permission_classes = [AllowAny]
 
     def delete(self, request, draft_id, media_id):
@@ -396,6 +403,15 @@ class MediaDeleteView(APIView):
             pass
         media.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def patch(self, request, draft_id, media_id):
+        draft = get_accessible_draft_or_404(request, draft_id)
+        media = get_object_or_404(Media, id=media_id, draft=draft)
+        serializer = MediaCaptionUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        media.caption = serializer.validated_data["caption"]
+        media.save(update_fields=["caption"])
+        return Response({"id": str(media.id), "caption": media.caption})
 
 
 class DraftClaimView(APIView):

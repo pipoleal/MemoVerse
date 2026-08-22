@@ -1,11 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FocusEvent } from "react";
 
 import FadeIn from "../../animations/FadeIn";
 import { useExperience, type MediaEntry } from "../context/ExperienceContext";
-import { deleteMediaFile, uploadMediaFile, validateFileForUpload } from "@/lib/mediaUpload";
+import { deleteMediaFile, uploadMediaFile, updateMediaCaption, validateFileForUpload, MAX_CAPTION_LENGTH } from "@/lib/mediaUpload";
 
 const MAX_PHOTOS = 10;
 
@@ -27,6 +27,10 @@ export default function PhotosStep() {
   // since these are transient UI states of the removal action itself.
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
+
+  // Fase 2.2: mesmo padrão de removeErrors acima — erro de salvar a
+  // legenda é transitório e só desta ação, nunca misturado em MediaEntry.
+  const [captionErrors, setCaptionErrors] = useState<Record<string, string>>({});
 
   async function runUpload(entryId: string, file: File) {
     const draftId = await ensureDraftId();
@@ -177,12 +181,46 @@ export default function PhotosStep() {
       return;
     }
 
+    // Fase 2.2: a legenda mora só no registro de Media, que acabou de ser
+    // apagado no backend acima — nada extra a limpar aqui, discardEntryLocally
+    // já remove a entrada (e a legenda com ela) do estado local também.
     discardEntryLocally(entryId);
     setDeletingIds((current) => {
       const next = new Set(current);
       next.delete(entryId);
       return next;
     });
+  }
+
+  // Fase 2.2: só atualiza o estado local a cada tecla (nunca faz PATCH
+  // aqui) — quem persiste é handleCaptionBlur, abaixo.
+  function handleCaptionChange(entryId: string, value: string) {
+    setPhotoEntries((current) =>
+      current.map((entry) => (entry.id === entryId ? { ...entry, caption: value } : entry))
+    );
+  }
+
+  async function handleCaptionBlur(entry: MediaEntry, event: FocusEvent<HTMLTextAreaElement>) {
+    if (!entry.mediaId) return;
+
+    setCaptionErrors((current) => {
+      if (!(entry.id in current)) return current;
+      const next = { ...current };
+      delete next[entry.id];
+      return next;
+    });
+
+    const draftId = await ensureDraftId();
+    if (!draftId) return;
+
+    try {
+      await updateMediaCaption(draftId, entry.mediaId, event.target.value);
+    } catch (error) {
+      setCaptionErrors((current) => ({
+        ...current,
+        [entry.id]: error instanceof Error ? error.message : "Não foi possível salvar a mensagem.",
+      }));
+    }
   }
 
   const photosCount = photoEntries.length;
@@ -293,100 +331,144 @@ export default function PhotosStep() {
 
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
               {photoEntries.map((entry, index) => (
-                <div
-                  key={entry.id}
-                  className="group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-white/5"
-                >
-                  <Image
-                    src={entry.previewUrl}
-                    alt={`Memória ${index + 1}`}
-                    fill
-                    unoptimized
-                    className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
+                <div key={entry.id} className="flex flex-col gap-2">
+                  <div
+                    className="group relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-white/5"
+                  >
+                    <Image
+                      src={entry.previewUrl}
+                      alt={`Memória ${index + 1}`}
+                      fill
+                      unoptimized
+                      className="object-cover transition-transform duration-500 group-hover:scale-105"
+                    />
 
-                  {entry.status === "uploading" && (
-                    <div className="absolute inset-x-0 top-0 h-1.5 bg-black/40">
-                      <div
-                        className="h-full bg-yellow-400 transition-all duration-200"
-                        style={{ width: `${entry.progress}%` }}
-                      />
-                    </div>
-                  )}
-
-                  <div className="absolute left-2 top-2">
                     {entry.status === "uploading" && (
-                      <span className="rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold text-yellow-300">
-                        Enviando {entry.progress}%
-                      </span>
-                    )}
-                    {entry.status === "uploaded" && (
-                      <span className="rounded-full bg-green-500/80 px-2 py-1 text-[10px] font-semibold text-black">
-                        ✓ Salva
-                      </span>
-                    )}
-                    {entry.status === "error" && (
-                      <span className="rounded-full bg-red-500/80 px-2 py-1 text-[10px] font-semibold text-white">
-                        Falhou
-                      </span>
-                    )}
-                    {entry.status === "local" && (
-                      <span className="rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold text-slate-300">
-                        Só no preview
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-linear-to-t from-black/80 via-black/20 to-transparent p-3 pt-10">
-                    {entry.status === "error" && (
-                      <p className="text-[11px] text-red-300">{entry.errorMessage}</p>
-                    )}
-                    {removeErrors[entry.id] && (
-                      <p className="text-[11px] text-red-300" aria-live="polite">
-                        {removeErrors[entry.id]}
-                      </p>
+                      <div className="absolute inset-x-0 top-0 h-1.5 bg-black/40">
+                        <div
+                          className="h-full bg-yellow-400 transition-all duration-200"
+                          style={{ width: `${entry.progress}%` }}
+                        />
+                      </div>
                     )}
 
-                    <div className="flex items-end justify-between">
-                      <span className="text-xs font-medium text-white">
-                        Foto {index + 1}
-                      </span>
+                    <div className="absolute left-2 top-2">
+                      {entry.status === "uploading" && (
+                        <span className="rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold text-yellow-300">
+                          Enviando {entry.progress}%
+                        </span>
+                      )}
+                      {entry.status === "uploaded" && (
+                        <span className="rounded-full bg-green-500/80 px-2 py-1 text-[10px] font-semibold text-black">
+                          ✓ Salva
+                        </span>
+                      )}
+                      {entry.status === "error" && (
+                        <span className="rounded-full bg-red-500/80 px-2 py-1 text-[10px] font-semibold text-white">
+                          Falhou
+                        </span>
+                      )}
+                      {entry.status === "local" && (
+                        <span className="rounded-full bg-black/70 px-2 py-1 text-[10px] font-semibold text-slate-300">
+                          Só no preview
+                        </span>
+                      )}
+                    </div>
 
-                      <div className="flex gap-2">
-                        {entry.status === "error" && (
+                    <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-linear-to-t from-black/80 via-black/20 to-transparent p-3 pt-10">
+                      {entry.status === "error" && (
+                        <p className="text-[11px] text-red-300">{entry.errorMessage}</p>
+                      )}
+                      {removeErrors[entry.id] && (
+                        <p className="text-[11px] text-red-300" aria-live="polite">
+                          {removeErrors[entry.id]}
+                        </p>
+                      )}
+
+                      <div className="flex items-end justify-between">
+                        <span className="text-xs font-medium text-white">
+                          Foto {index + 1}
+                        </span>
+
+                        <div className="flex gap-2">
+                          {entry.status === "error" && (
+                            <button
+                              type="button"
+                              onClick={() => retryUpload(entry)}
+                              className="rounded-full bg-yellow-400 px-3 py-2 text-xs font-semibold text-black transition-colors hover:bg-yellow-300"
+                            >
+                              Tentar de novo
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            onClick={() => retryUpload(entry)}
-                            className="rounded-full bg-yellow-400 px-3 py-2 text-xs font-semibold text-black transition-colors hover:bg-yellow-300"
+                            onClick={() => removePhoto(entry.id)}
+                            disabled={deletingIds.has(entry.id)}
+                            className="
+                              rounded-full
+                              bg-black/70
+                              px-3
+                              py-2
+                              text-xs
+                              font-semibold
+                              text-white
+                              transition-colors
+                              hover:bg-red-500
+                              disabled:cursor-not-allowed
+                              disabled:opacity-60
+                              disabled:hover:bg-black/70
+                            "
                           >
-                            Tentar de novo
+                            {deletingIds.has(entry.id) ? "Removendo…" : "Remover"}
                           </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => removePhoto(entry.id)}
-                          disabled={deletingIds.has(entry.id)}
-                          className="
-                            rounded-full
-                            bg-black/70
-                            px-3
-                            py-2
-                            text-xs
-                            font-semibold
-                            text-white
-                            transition-colors
-                            hover:bg-red-500
-                            disabled:cursor-not-allowed
-                            disabled:opacity-60
-                            disabled:hover:bg-black/70
-                          "
-                        >
-                          {deletingIds.has(entry.id) ? "Removendo…" : "Remover"}
-                        </button>
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  {/* Fase 2.2: irmão do quadrado acima, nunca sobreposto à
+                      imagem nem ao botão Remover — só existe depois que a
+                      foto realmente terminou de subir (tem mediaId real pra
+                      anexar a legenda). */}
+                  {entry.status === "uploaded" && (
+                    <div className="flex flex-col gap-1">
+                      <textarea
+                        value={entry.caption ?? ""}
+                        onChange={(event) => handleCaptionChange(entry.id, event.target.value)}
+                        onBlur={(event) => void handleCaptionBlur(entry, event)}
+                        placeholder="✏️ Adicione uma mensagem para esta foto..."
+                        maxLength={MAX_CAPTION_LENGTH}
+                        rows={2}
+                        className="
+                          w-full
+                          resize-none
+                          rounded-xl
+                          border
+                          border-white/10
+                          bg-white/5
+                          px-3
+                          py-2
+                          text-xs
+                          leading-relaxed
+                          text-white
+                          outline-none
+                          placeholder:text-slate-500
+                          transition-all
+                          duration-300
+                          focus:border-yellow-400
+                          focus:bg-white/10
+                          focus:ring-2
+                          focus:ring-yellow-400/20
+                        "
+                      />
+                      {captionErrors[entry.id] && (
+                        <p className="text-[11px] text-red-300" aria-live="polite">
+                          {captionErrors[entry.id]}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

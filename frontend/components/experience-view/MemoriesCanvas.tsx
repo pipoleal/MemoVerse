@@ -7,11 +7,15 @@ import PhotoMemoryBeat from "./PhotoMemoryBeat";
 import VideoMemoryBeat from "./VideoMemoryBeat";
 import { useInViewport } from "@/lib/useInViewport";
 import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
+import type { PhotoMemory } from "@/components/experience/types";
 
 type MemoriesCanvasProps = {
   theme?: ThemeVisual;
   shortMessage: string;
-  photos: string[];
+  // Fase 2.2: cada foto carrega sua própria legenda opcional — vídeo
+  // continua string[] (sem legenda nesta fase, ver VideoMemoryBeat.tsx,
+  // que não foi alterado).
+  photos: PhotoMemory[];
   videos: string[];
   onComplete: () => void;
 };
@@ -58,7 +62,13 @@ export default function MemoriesCanvas({
       <MemoryPreludeChapter theme={theme} message={shortMessage} />
 
       {photos.map((photo, index) => (
-        <PhotoMemoryBeat key={`photo-${index}`} src={photo} index={index} total={photos.length} />
+        <PhotoMemoryBeat
+          key={`photo-${index}`}
+          src={photo.url}
+          caption={photo.caption}
+          index={index}
+          total={photos.length}
+        />
       ))}
 
       {videos.map((video, index) => (

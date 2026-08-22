@@ -1185,6 +1185,105 @@ class MediaDeleteViewTests(TestCase):
         self.assertNotIn(str(media.id), media_ids)
 
 
+class MediaCaptionUpdateTests(TestCase):
+    """PATCH /api/experiences/drafts/<id>/media/<id>/ (legenda) — Fase 2.2.
+    Mesma view/URL/autorização de MediaDeleteViewTests, só um verbo a mais."""
+
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+        self.other_user = make_user("other@example.com")
+        self.draft = make_draft(self.owner)
+        self.media = make_media(self.draft, upload_status=Media.UploadStatus.UPLOADED)
+
+    def test_owner_updates_caption(self):
+        response = auth_client(self.owner).patch(
+            media_delete_url(self.draft.id, self.media.id),
+            {"caption": "Nosso primeiro passeio juntos."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.media.refresh_from_db()
+        self.assertEqual(self.media.caption, "Nosso primeiro passeio juntos.")
+
+    def test_blank_caption_is_valid_and_means_no_caption(self):
+        self.media.caption = "Uma legenda qualquer"
+        self.media.save(update_fields=["caption"])
+
+        response = auth_client(self.owner).patch(
+            media_delete_url(self.draft.id, self.media.id), {"caption": ""}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.media.refresh_from_db()
+        self.assertEqual(self.media.caption, "")
+
+    def test_legacy_media_without_caption_reads_as_empty_string(self):
+        # make_media() nunca passa caption -- simula mídia criada antes
+        # deste campo existir.
+        response = auth_client(self.owner).get(draft_detail_url(self.draft.id))
+        media_item = next(item for item in response.data["media"] if item["id"] == str(self.media.id))
+        self.assertEqual(media_item["caption"], "")
+
+    def test_other_user_cannot_update_someone_elses_media_caption(self):
+        response = auth_client(self.other_user).patch(
+            media_delete_url(self.draft.id, self.media.id), {"caption": "Tentativa indevida"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.media.refresh_from_db()
+        self.assertEqual(self.media.caption, "")
+
+    def test_anonymous_user_without_token_cannot_update_caption(self):
+        response = APIClient().patch(
+            media_delete_url(self.draft.id, self.media.id), {"caption": "Tentativa indevida"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_caption_at_max_length_is_accepted(self):
+        caption = "x" * 140
+        response = auth_client(self.owner).patch(
+            media_delete_url(self.draft.id, self.media.id), {"caption": caption}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.media.refresh_from_db()
+        self.assertEqual(self.media.caption, caption)
+
+    def test_caption_over_max_length_is_rejected(self):
+        response = auth_client(self.owner).patch(
+            media_delete_url(self.draft.id, self.media.id), {"caption": "x" * 141}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.media.refresh_from_db()
+        self.assertEqual(self.media.caption, "")
+
+    def test_caption_update_does_not_change_other_media_fields(self):
+        original_upload_status = self.media.upload_status
+        original_sort_order = self.media.sort_order
+        original_storage_key = self.media.storage_key
+
+        response = auth_client(self.owner).patch(
+            media_delete_url(self.draft.id, self.media.id), {"caption": "Só a legenda muda"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.media.refresh_from_db()
+        self.assertEqual(self.media.upload_status, original_upload_status)
+        self.assertEqual(self.media.sort_order, original_sort_order)
+        self.assertEqual(self.media.storage_key, original_storage_key)
+
+    def test_caption_appears_in_public_experience(self):
+        self.media.caption = "Nosso primeiro passeio juntos."
+        self.media.save(update_fields=["caption"])
+        self.draft.status = ExperienceDraft.Status.PUBLISHED
+        self.draft.slug = "caption-public-test"
+        self.draft.published_at = timezone.now()
+        self.draft.save(update_fields=["status", "slug", "published_at"])
+
+        with patch("apps.experiences.views.generate_presigned_read_url", return_value="https://r2.example/signed"):
+            response = self.client.get(public_url(self.draft.slug))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        media_item = next(item for item in response.data["media"] if item["id"] == str(self.media.id))
+        self.assertEqual(media_item["caption"], "Nosso primeiro passeio juntos.")
+
+
 class MediaCleanupServiceTests(TestCase):
     """services.media_cleanup.cleanup_abandoned_media — ver docstring do
     módulo para a motivação (uploads nunca confirmados não podem prender a

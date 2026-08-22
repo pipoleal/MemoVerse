@@ -50,6 +50,11 @@ export interface MediaEntry {
   // persists via deleteMediaFile, for both cases) — kept as provenance
   // metadata (id-based mediaId alone doesn't distinguish the two).
   fromServer?: boolean;
+  // Fase 2.2: legenda individual — só tem sentido depois que a mídia tem
+  // um mediaId real (ver PhotosStep.tsx, campo só aparece com
+  // status:"uploaded"). VideosStep.tsx também usa MediaEntry mas nunca lê
+  // nem escreve este campo — permanece sempre undefined ali.
+  caption?: string;
 }
 
 type ExperienceContextType = {
@@ -105,6 +110,7 @@ function mediaItemsToEntries(media: DraftDetail["media"], mediaType: "photo" | "
       status: "uploaded" as const,
       progress: 100,
       fromServer: true,
+      caption: item.caption,
     }));
 }
 
@@ -154,12 +160,13 @@ export function ExperienceProvider({
   );
 
   // Derived, not stored: photoEntries/videoEntries are the single source of
-  // truth for media. experience.photos/videos (plain preview-URL arrays,
-  // consumed as-is by ExperienceViewer for the 3D preview) are recomputed
-  // from them on every render instead of mirrored into state via an effect.
+  // truth for media. experience.photos/videos (consumed as-is by
+  // ExperienceViewer for the 3D preview) are recomputed from them on every
+  // render instead of mirrored into state via an effect. photos carries
+  // {url, caption} (Fase 2.2) — videos stays plain URLs, unchanged.
   const exposedExperience: Experience = {
     ...experience,
-    photos: photoEntries.map((entry) => entry.previewUrl),
+    photos: photoEntries.map((entry) => ({ url: entry.previewUrl, caption: entry.caption ?? "" })),
     videos: videoEntries.map((entry) => entry.previewUrl),
   };
 

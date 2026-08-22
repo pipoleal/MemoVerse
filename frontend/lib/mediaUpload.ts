@@ -18,6 +18,11 @@ const MAX_BYTES: Record<MediaType, number> = {
   video: 500 * 1024 * 1024,
 };
 
+// Fase 2.2: mirrors apps/experiences/serializers.py MediaCaptionUpdateSerializer
+// (max_length=140) — same manual-sync convention as ALLOWED_MIME_TYPES/MAX_BYTES
+// above.
+export const MAX_CAPTION_LENGTH = 140;
+
 export function validateFileForUpload(mediaType: MediaType, file: File): string | null {
   if (!ALLOWED_MIME_TYPES[mediaType].includes(file.type)) {
     return "Tipo de arquivo não permitido.";
@@ -143,6 +148,23 @@ export async function deleteMediaFile(draftId: string, mediaId: string): Promise
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 404) return;
     throw new Error(extractErrorMessage(error, "Não foi possível remover o arquivo."));
+  }
+}
+
+// Fase 2.2: PATCH na mesma view/URL do delete (MediaDeleteView.patch) —
+// nenhuma autorização nova, mesmo draftClaimHeaders() de todo o resto
+// deste arquivo. Chamada só no onBlur do campo de legenda, nunca por
+// tecla — quem decide a cadência é PhotosStep.tsx, esta função só faz a
+// chamada em si.
+export async function updateMediaCaption(draftId: string, mediaId: string, caption: string): Promise<void> {
+  try {
+    await api.patch(
+      `/experiences/drafts/${draftId}/media/${mediaId}/`,
+      { caption },
+      { headers: draftClaimHeaders(draftId) }
+    );
+  } catch (error) {
+    throw new Error(extractErrorMessage(error, "Não foi possível salvar a mensagem."));
   }
 }
 

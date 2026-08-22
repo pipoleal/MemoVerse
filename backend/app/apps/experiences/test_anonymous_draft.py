@@ -382,6 +382,61 @@ class AnonymousMediaUploadTests(TestCase):
         self.assertEqual(Media.objects.count(), 0)
 
 
+class AnonymousMediaCaptionUpdateTests(TestCase):
+    """Fase 2.2 — PATCH .../media/<id>/ (legenda) reaproveita exatamente a
+    mesma autorização por claim_token que upload/delete já usam."""
+
+    def setUp(self):
+        cache.clear()
+        self.draft_id, self.token = create_anonymous_draft()
+
+    def _headers(self, token=None):
+        return {"HTTP_X_DRAFT_CLAIM_TOKEN": token if token is not None else self.token}
+
+    def _upload_photo(self):
+        with patch_r2_upload():
+            intent = anon_client().post(
+                upload_intent_url(self.draft_id),
+                {"media_type": "photo", "filename": "foto.jpg", "mime_type": "image/jpeg", "size_bytes": 1000},
+                format="json",
+                **self._headers(),
+            )
+        media_id = intent.data["media_id"]
+        with patch_r2_complete(content_length=1000, content_type="image/jpeg"):
+            anon_client().post(upload_complete_url(self.draft_id, media_id), **self._headers())
+        return media_id
+
+    def test_caption_update_with_correct_token_succeeds(self):
+        media_id = self._upload_photo()
+        response = anon_client().patch(
+            media_delete_url(self.draft_id, media_id),
+            {"caption": "Nosso primeiro passeio juntos."},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Media.objects.get(id=media_id).caption, "Nosso primeiro passeio juntos.")
+
+    def test_caption_update_without_token_is_404_and_caption_unchanged(self):
+        media_id = self._upload_photo()
+        response = anon_client().patch(
+            media_delete_url(self.draft_id, media_id), {"caption": "Tentativa sem token"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Media.objects.get(id=media_id).caption, "")
+
+    def test_caption_update_with_wrong_token_is_404_and_caption_unchanged(self):
+        media_id = self._upload_photo()
+        response = anon_client().patch(
+            media_delete_url(self.draft_id, media_id),
+            {"caption": "Tentativa com token errado"},
+            format="json",
+            **self._headers(token="wrong"),
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Media.objects.get(id=media_id).caption, "")
+
+
 # ---------------------------------------------------------------------------
 # 11/12/13/15 — claim: sucesso, idempotência, apagamento do token
 # ---------------------------------------------------------------------------
