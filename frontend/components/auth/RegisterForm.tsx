@@ -48,12 +48,17 @@ export default function RegisterForm() {
       // se existir. Best-effort de propósito — cadastro/login já
       // concluídos com sucesso; um token expirado/já reivindicado (outra
       // aba, outro dispositivo) nunca deve impedir o usuário de continuar.
+      // claimedDraftId só é preenchido quando o claim de fato funcionou —
+      // usado abaixo para mandar quem veio do preview direto pro checkout,
+      // em vez do dashboard (Auditoria fluxo Preview→Cadastro→Pagamento).
       const anonymousDraft = getAnonymousDraft();
+      let claimedDraftId: string | null = null;
       if (anonymousDraft) {
         try {
           await api.post(`/experiences/drafts/${anonymousDraft.draftId}/claim/`, {
             claim_token: anonymousDraft.claimToken,
           });
+          claimedDraftId = anonymousDraft.draftId;
         } catch {
           // ignorado de propósito — ver comentário acima
         } finally {
@@ -68,7 +73,7 @@ export default function RegisterForm() {
         await savePendingExperienceDraft();
         clearPendingExperience();
       }
-      router.push("/dashboard");
+      router.push(claimedDraftId ? `/checkout/${claimedDraftId}` : "/dashboard");
     } catch (submitError) {
       setError(errorMessage(submitError));
     } finally {

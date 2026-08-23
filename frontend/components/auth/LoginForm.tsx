@@ -45,13 +45,17 @@ export default function LoginForm() {
       await login({ email, password });
       loginSucceeded = true;
 
-      // Etapa 10: mesmo mecanismo de RegisterForm.tsx — ver comentário lá.
+      // Etapa 10: mesmo mecanismo de RegisterForm.tsx — ver comentário lá,
+      // incluindo claimedDraftId (redireciona pro checkout em vez do
+      // dashboard quando o claim funcionou).
       const anonymousDraft = getAnonymousDraft();
+      let claimedDraftId: string | null = null;
       if (anonymousDraft) {
         try {
           await api.post(`/experiences/drafts/${anonymousDraft.draftId}/claim/`, {
             claim_token: anonymousDraft.claimToken,
           });
+          claimedDraftId = anonymousDraft.draftId;
         } catch {
           // ignorado de propósito — ver RegisterForm.tsx
         } finally {
@@ -63,7 +67,7 @@ export default function LoginForm() {
         await savePendingExperienceDraft();
         clearPendingExperience();
       }
-      router.push("/dashboard");
+      router.push(claimedDraftId ? `/checkout/${claimedDraftId}` : "/dashboard");
     } catch (submitError) {
       setError(errorMessage(submitError, loginSucceeded));
     } finally {
