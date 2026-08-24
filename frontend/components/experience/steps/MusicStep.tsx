@@ -373,6 +373,28 @@ export default function MusicStep() {
                 </button>
               )}
             </div>
+
+            {/* AVISO SPOTIFY */}
+            {selectedProvider === "spotify" && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/0.03 p-5">
+                <div className="flex gap-3">
+                  <span className="text-xl">🎵</span>
+
+                  <div>
+                    <h3 className="font-semibold text-white">
+                      Música do Spotify
+                    </h3>
+
+                    <p className="mt-1 text-sm leading-6 text-slate-400">
+                      Dependendo da conta do visitante, o Spotify pode
+                      reproduzir apenas uma prévia da música. Para ouvir a
+                      faixa completa, pode ser necessário abrir ou entrar
+                      no Spotify.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
