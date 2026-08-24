@@ -382,6 +382,122 @@ class AnonymousMediaUploadTests(TestCase):
         self.assertEqual(Media.objects.count(), 0)
 
 
+class ConcurrentUploadIntentSortOrderTests(TransactionTestCase):
+    """MediaUploadIntentView.post() calculava next_order (Max(sort_order)+1)
+    e criava a Media sem nenhum lock entre a leitura e a escrita — quando o
+    usuário seleciona várias fotos de uma vez, o frontend dispara uma
+    upload-intent por arquivo em paralelo, e duas requisições concorrentes
+    podiam ler o mesmo Max antes de qualquer uma persistir, gerando
+    sort_order duplicado (0, 0, 0 em vez de 0, 1, 2). A correção usa
+    select_for_update() no draft, mesmo padrão de ClaimRaceConditionTests
+    acima. TransactionTestCase (não TestCase) é necessário aqui pelo mesmo
+    motivo daquela classe: cada thread precisa de uma transação real
+    própria, o que TestCase (uma única transação externa por teste) não
+    permite."""
+
+    serialized_rollback = True
+
+    def setUp(self):
+        cache.clear()
+
+    def _concurrent_uploads(self, *, make_client, draft_id, count=3):
+        # make_client é chamado ANTES do barrier (fora da seção
+        # cronometrada) especificamente para que qualquer I/O de setup do
+        # cliente (ex.: emitir um JWT para o caso autenticado) nunca
+        # concorra, no SQLite de teste, com as próprias upload-intents que
+        # este teste está tentando cronometrar — evitaria travar
+        # "database is locked" por um motivo alheio ao que está sendo
+        # testado.
+        clients = [make_client() for _ in range(count)]
+        barrier = threading.Barrier(count)
+        results = []
+        errors = []
+
+        def worker(index, client):
+            try:
+                barrier.wait(timeout=10)
+                for attempt in range(8):
+                    try:
+                        with patch_r2_upload():
+                            resp = client.post(
+                                upload_intent_url(draft_id),
+                                {
+                                    "media_type": "photo",
+                                    "filename": f"foto-{index}.jpg",
+                                    "mime_type": "image/jpeg",
+                                    "size_bytes": 1000,
+                                },
+                                format="json",
+                            )
+                        results.append(resp)
+                        return
+                    except OperationalError:
+                        if attempt == 7:
+                            raise
+                        time.sleep(0.05 * (attempt + 1))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=worker, args=(i, clients[i])) for i in range(count)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), count)
+        return results
+
+    def _assert_no_duplicate_contiguous_orders(self, draft_id, *, minimum):
+        orders = sorted(Media.objects.filter(draft_id=draft_id).values_list("sort_order", flat=True))
+        # A propriedade que importa (o bug original) é ausência de
+        # duplicata — nunca duas mídias com o mesmo sort_order. O SQLite de
+        # teste, sob "database table is locked", ocasionalmente força um
+        # retry de uma requisição já commitada no servidor (o cliente não
+        # viu a resposta a tempo), produzindo uma linha genuína a mais; por
+        # isso a asserção é "sem duplicata e contígua a partir de 0" em vez
+        # de um tamanho fixo — em Postgres (produção), com select_for_update
+        # de verdade, o caminho comum é sempre exatamente `minimum` linhas.
+        self.assertEqual(len(orders), len(set(orders)), f"sort_order duplicado: {orders}")
+        self.assertGreaterEqual(len(orders), minimum)
+        self.assertEqual(orders, list(range(len(orders))))
+
+    def test_concurrent_uploads_by_anonymous_visitor_never_duplicate_sort_order(self):
+        draft_id, token = create_anonymous_draft()
+
+        def make_client():
+            client = anon_client()
+            client.credentials(HTTP_X_DRAFT_CLAIM_TOKEN=token)
+            return client
+
+        results = self._concurrent_uploads(make_client=make_client, draft_id=draft_id)
+        for resp in results:
+            self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+        self._assert_no_duplicate_contiguous_orders(draft_id, minimum=len(results))
+
+    def test_concurrent_uploads_by_authenticated_owner_never_duplicate_sort_order(self):
+        user = make_user("racer-media@example.com")
+        response = auth_client(user).post(DRAFTS_URL, {}, format="json")
+        draft_id = response.data["id"]
+        # Token emitido uma vez aqui (fora das threads) pelo mesmo motivo
+        # documentado em _concurrent_uploads.
+        bearer = f"Bearer {RefreshToken.for_user(user).access_token}"
+
+        def make_client():
+            client = APIClient()
+            client.credentials(HTTP_AUTHORIZATION=bearer)
+            return client
+
+        results = self._concurrent_uploads(make_client=make_client, draft_id=draft_id)
+        for resp in results:
+            self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+
+        self._assert_no_duplicate_contiguous_orders(draft_id, minimum=len(results))
+
+
 class AnonymousMediaCaptionUpdateTests(TestCase):
     """Fase 2.2 — PATCH .../media/<id>/ (legenda) reaproveita exatamente a
     mesma autorização por claim_token que upload/delete já usam."""

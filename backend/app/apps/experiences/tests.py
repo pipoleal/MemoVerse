@@ -700,6 +700,22 @@ class MediaUploadIntentRegressionTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Media.objects.filter(draft=self.draft).count(), 10)
 
+    def test_sequential_uploads_receive_strictly_increasing_sort_order(self):
+        # Não-concorrente, de propósito: cobre o caminho normal (fotos
+        # enviadas uma de cada vez) que já funcionava antes da correção da
+        # race condition — ver ConcurrentUploadIntentSortOrderTests em
+        # test_anonymous_draft.py para o caso concorrente.
+        orders = []
+        for i in range(3):
+            with self._patch_r2():
+                response = auth_client(self.owner).post(
+                    upload_intent_url(self.draft.id),
+                    {"media_type": "photo", "filename": f"foto-{i}.jpg", "mime_type": "image/jpeg", "size_bytes": 1000},
+                )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            orders.append(Media.objects.get(id=response.data["media_id"]).sort_order)
+        self.assertEqual(orders, [0, 1, 2])
+
     def test_r2_not_configured_returns_503_and_cleans_up_media_row(self):
         # Simula explicitamente R2 não configurado (não depende de o
         # ambiente de teste ter ou não credenciais reais — o .env de dev

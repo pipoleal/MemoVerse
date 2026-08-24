@@ -304,25 +304,46 @@ class MediaUploadIntentView(APIView):
         # nunca confirmado via .../complete/) para que elas nunca prendam a
         # quota do usuário indefinidamente — ver services.media_cleanup.
         cleanup_abandoned_media(draft)
-        active_media = draft.media.exclude(upload_status=Media.UploadStatus.FAILED)
-        if active_media.filter(media_type=media_type).count() >= limits[media_type]:
-            return Response({"detail": "Limite de mídias atingido."}, status=status.HTTP_400_BAD_REQUEST)
 
         filename = PurePath(data["filename"]).name
         stem = slugify(PurePath(filename).stem) or "media"
         extension = PurePath(filename).suffix.lower()[:12]
-        next_order = (active_media.filter(media_type=media_type).aggregate(max_order=Max("sort_order"))["max_order"] or -1) + 1
-        media_id = uuid.uuid4()
-        media = Media.objects.create(
-            id=media_id,
-            draft=draft,
-            media_type=media_type,
-            storage_key=f"drafts/{draft.id}/{media_type}s/{media_id}-{stem}{extension}",
-            original_filename=filename,
-            mime_type=data["mime_type"],
-            size_bytes=data["size_bytes"],
-            sort_order=next_order,
-        )
+
+        # select_for_update() serializa upload-intents concorrentes do MESMO
+        # draft — sem o lock, duas requisições (ex.: selecionar várias fotos
+        # de uma vez, que dispara uma chamada por arquivo em paralelo) podem
+        # ler o mesmo Max(sort_order) antes de qualquer uma persistir sua
+        # própria Media, gerando sort_order duplicado. Mesmo padrão já usado
+        # em DraftClaimView/CheckoutService/PublicationService — no-op
+        # seguro em SQLite (testes), efetivo em Postgres (produção). Como
+        # efeito colateral correto (não uma mudança de comportamento): a
+        # checagem de quota, que tinha a mesma janela de corrida, passa a
+        # ser igualmente atômica.
+        with transaction.atomic():
+            draft = ExperienceDraft.objects.select_for_update().get(pk=draft.pk)
+            active_media = draft.media.exclude(upload_status=Media.UploadStatus.FAILED)
+            if active_media.filter(media_type=media_type).count() >= limits[media_type]:
+                return Response({"detail": "Limite de mídias atingido."}, status=status.HTTP_400_BAD_REQUEST)
+            # NUNCA `max_order or -1`: quando já existe uma mídia com
+            # sort_order=0 (o caso mais comum — a primeira foto do draft),
+            # `0 or -1` avalia para -1 em Python (0 é falsy), fazendo toda
+            # mídia seguinte voltar a receber sort_order=0 em vez de
+            # avançar — um bug que já reproduzia mesmo sem nenhuma
+            # concorrência, só com uploads sequenciais. Só None (nenhuma
+            # mídia ainda) deve cair no -1 inicial.
+            max_order = active_media.filter(media_type=media_type).aggregate(max_order=Max("sort_order"))["max_order"]
+            next_order = (max_order if max_order is not None else -1) + 1
+            media_id = uuid.uuid4()
+            media = Media.objects.create(
+                id=media_id,
+                draft=draft,
+                media_type=media_type,
+                storage_key=f"drafts/{draft.id}/{media_type}s/{media_id}-{stem}{extension}",
+                original_filename=filename,
+                mime_type=data["mime_type"],
+                size_bytes=data["size_bytes"],
+                sort_order=next_order,
+            )
         try:
             upload_url = get_r2_client().generate_presigned_url(
                 "put_object",
