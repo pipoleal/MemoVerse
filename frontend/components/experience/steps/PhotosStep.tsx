@@ -5,12 +5,61 @@ import { useRef, useState, type ChangeEvent, type FocusEvent } from "react";
 
 import FadeIn from "../../animations/FadeIn";
 import { useExperience, type MediaEntry } from "../context/ExperienceContext";
+import { type ExperienceTypeId } from "../informationStepConfig";
 import { deleteMediaFile, uploadMediaFile, updateMediaCaption, validateFileForUpload, MAX_CAPTION_LENGTH } from "@/lib/mediaUpload";
 
 const MAX_PHOTOS = 10;
 
+// Sugestões de legenda por tipo de experiência — só o placeholder do
+// textarea muda; o valor salvo da caption continua exatamente o que o
+// usuário digita (handleCaptionChange/handleCaptionBlur, abaixo, não leem
+// isto). Rotaciona por índice da foto (index % length) pra não repetir a
+// mesma frase em todas as fotos da mesma experiência.
+const CAPTION_SUGGESTIONS: Record<ExperienceTypeId, string[]> = {
+  birthday: [
+    "Mais um ano, mais motivos pra celebrar você 🎂",
+    "Feliz por poder comemorar você hoje 🥳",
+    "Que seu novo ano seja tão especial quanto você ✨",
+  ],
+  dating: [
+    "O começo da nossa história ❤️",
+    "Foi aqui que tudo começou",
+    "Ainda lembro exatamente como me senti",
+  ],
+  marriage: [
+    "O começo do resto das nossas vidas 💍",
+    "Um momento que vamos guardar para sempre",
+    "O dia em que escolhemos nosso futuro juntos ❤️",
+  ],
+  monthiversary: [
+    "Mais um mês, mais uma memória nossa 🤍",
+    "Pequenos momentos que viram grandes lembranças",
+    "Mais tempo juntos, mais histórias pra contar",
+  ],
+  tribute: [
+    "Uma lembrança que guardo com muito carinho",
+    "Uma pessoa que merece ser lembrada para sempre ❤️",
+    "Uma memória que sempre vai ter um lugar especial",
+  ],
+  custom: [
+    "Um momento que merece ser lembrado ✨",
+    "Essa foto guarda um pedacinho da nossa história",
+    "Uma memória especial para guardar",
+  ],
+};
+
+const DEFAULT_CAPTION_PLACEHOLDER = "✏️ Adicione uma mensagem para esta foto...";
+
+// Tipo desconhecido/vazio (rascunho ainda sem tipo escolhido, ou valor
+// legado) cai no placeholder genérico de sempre — nunca quebra, mesmo
+// fallback pattern de getInformationStepConfig em informationStepConfig.ts.
+function getCaptionPlaceholder(type: string | undefined, index: number): string {
+  const suggestions = type && type in CAPTION_SUGGESTIONS ? CAPTION_SUGGESTIONS[type as ExperienceTypeId] : undefined;
+  return suggestions ? suggestions[index % suggestions.length] : DEFAULT_CAPTION_PLACEHOLDER;
+}
+
 export default function PhotosStep() {
-  const { photoEntries, setPhotoEntries, ensureDraftId } = useExperience();
+  const { photoEntries, setPhotoEntries, ensureDraftId, experience } = useExperience();
 
   // AbortControllers are not serializable, so they live outside React state,
   // keyed by the same stable entry id used in photoEntries. Deliberately
@@ -437,7 +486,7 @@ export default function PhotosStep() {
                         value={entry.caption ?? ""}
                         onChange={(event) => handleCaptionChange(entry.id, event.target.value)}
                         onBlur={(event) => void handleCaptionBlur(entry, event)}
-                        placeholder="✏️ Adicione uma mensagem para esta foto..."
+                        placeholder={getCaptionPlaceholder(experience.type, index)}
                         maxLength={MAX_CAPTION_LENGTH}
                         rows={2}
                         className="
