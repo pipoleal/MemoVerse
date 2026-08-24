@@ -38,6 +38,19 @@ const musicOptions: {
   },
 ];
 
+// MVP: só YouTube e "Nenhuma" aparecem como opção selecionável no grid
+// abaixo — Spotify e Apple Music continuam definidos em musicOptions (ícone,
+// título, descrição) e totalmente suportados por getPlaceholder/
+// validateMusicUrl/selectProvider/MusicPlayer.tsx, prontos para a V2
+// reativar só removendo esse filtro. Uma experiência antiga com
+// music.provider "spotify"/"apple_music" já salvo continua funcionando: o
+// estado inicial de selectedProvider (abaixo) não passa por este filtro, só
+// o que é renderizado como card clicável passa.
+const MVP_MUSIC_OPTION_IDS: MusicProvider[] = ["youtube", "none"];
+const visibleMusicOptions = musicOptions.filter((option) =>
+  MVP_MUSIC_OPTION_IDS.includes(option.id)
+);
+
 function getPlaceholder(provider: MusicProvider) {
   switch (provider) {
     case "youtube":
@@ -221,7 +234,7 @@ export default function MusicStep() {
 
         {/* PLATAFORMAS */}
         <div className="mt-12 grid gap-5 md:grid-cols-2">
-          {musicOptions.map((option) => {
+          {visibleMusicOptions.map((option) => {
             const selected =
               selectedProvider === option.id;
 
