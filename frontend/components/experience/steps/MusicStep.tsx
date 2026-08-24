@@ -26,7 +26,7 @@ const musicOptions: {
   },
   {
     id: "apple_music",
-    icon: "",
+    icon: "🍎",
     title: "Apple Music",
     description: "Use o link de uma música do Apple Music.",
   },
