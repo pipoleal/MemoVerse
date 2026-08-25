@@ -32,6 +32,19 @@ const STAR_GOLD = "#ffd966";
 const BASE_POINT_SIZE = 22;
 const ATTENUATION_REFERENCE_DISTANCE = 12;
 
+// Ajuste mobile: só escala/glow, nunca posição (position/aPhase/aSize por
+// estrela continuam vindo intactos de galaxyStars.ts). Mesmo breakpoint
+// `sm` que o resto do produto já usa para mobile (ex. GalaxyHub.tsx).
+// ~20% maior é o meio do intervalo pedido (15–25%); o glow extra é só um
+// pequeno acréscimo de brilho, não um halo maior.
+const MOBILE_BREAKPOINT_PX = 640;
+const MOBILE_SIZE_MULTIPLIER = 1.2;
+const MOBILE_GLOW_BOOST = 0.06;
+
+function isMobileViewport(): boolean {
+  return typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT_PX;
+}
+
 // Textura procedural única (canvas 2D, nunca uma imagem externa): núcleo
 // branco no centro, halo em várias camadas de gradiente radial e 4 raios
 // sutis — tudo em um único sprite branco com alfa gradual (a cor dourada
@@ -114,6 +127,7 @@ const VERTEX_SHADER = `
   attribute float aSize;
   attribute float aBoost;
   uniform float uTime;
+  uniform float uSizeMultiplier;
   varying float vGlow;
 
   void main() {
@@ -121,7 +135,7 @@ const VERTEX_SHADER = `
     vGlow = pulse * aBoost;
 
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = aSize * ${BASE_POINT_SIZE.toFixed(1)} * pulse * aBoost * (${ATTENUATION_REFERENCE_DISTANCE.toFixed(1)} / -mvPosition.z);
+    gl_PointSize = aSize * ${BASE_POINT_SIZE.toFixed(1)} * pulse * aBoost * uSizeMultiplier * (${ATTENUATION_REFERENCE_DISTANCE.toFixed(1)} / -mvPosition.z);
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -129,12 +143,13 @@ const VERTEX_SHADER = `
 const FRAGMENT_SHADER = `
   uniform sampler2D uTexture;
   uniform vec3 uColor;
+  uniform float uGlowBoost;
   varying float vGlow;
 
   void main() {
     vec4 tex = texture2D(uTexture, gl_PointCoord);
     if (tex.a < 0.02) discard;
-    gl_FragColor = vec4(uColor * (0.75 + 0.5 * vGlow), tex.a);
+    gl_FragColor = vec4(uColor * (0.75 + 0.5 * vGlow + uGlowBoost), tex.a);
   }
 `;
 
@@ -155,7 +170,19 @@ const FRAGMENT_SHADER = `
 // threshold do raycaster, intocado nesta mudança).
 export default function MemoryStars({ stars, onSelect, selectedId }: MemoryStarsProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [isMobile, setIsMobile] = useState(isMobileViewport);
   const pointsRef = useRef<THREE.Points>(null);
+
+  // Só reage a resize/rotação depois do primeiro render (que já usa o
+  // valor correto via lazy initializer acima) — setState aqui roda dentro
+  // do listener, nunca síncrono no corpo do efeito.
+  useEffect(() => {
+    function handleResize() {
+      setIsMobile(isMobileViewport());
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const texture = useMemo(() => getStarTexture(), []);
 
@@ -187,8 +214,10 @@ export default function MemoryStars({ stars, onSelect, selectedId }: MemoryStars
       uTime: { value: 0 },
       uTexture: { value: texture },
       uColor: { value: new THREE.Color(STAR_GOLD) },
+      uSizeMultiplier: { value: isMobile ? MOBILE_SIZE_MULTIPLIER : 1 },
+      uGlowBoost: { value: isMobile ? MOBILE_GLOW_BOOST : 0 },
     }),
-    [texture]
+    [texture, isMobile]
   );
 
   // Único uniform atualizado por frame (uTime) — não um loop por estrela;

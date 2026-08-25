@@ -85,7 +85,16 @@ export default function LoginForm() {
         </span>
       </div>
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-      <Button type="submit" className="w-full">{loading ? "Entrando..." : "Entrar"}</Button>
+      <Button type="submit" className="w-full disabled:cursor-not-allowed disabled:opacity-80" disabled={loading}>
+        {loading ? (
+          <span className="flex items-center justify-center gap-2">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+            Entrando...
+          </span>
+        ) : (
+          "Entrar"
+        )}
+      </Button>
     </form>
   );
 }
