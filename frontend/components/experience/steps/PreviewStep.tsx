@@ -59,9 +59,18 @@ export default function PreviewStep() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 h-screen w-screen overflow-hidden bg-black">
+    // Etapa do scroll do Preview: nunca `fixed`/`h-screen`/`overflow-hidden`
+    // aqui — um bloco fixed nunca cresce com o scroll da página (fica preso
+    // ao viewport por definição), e é exatamente isso que travava a carta
+    // grande. ExperienceBuilder.tsx já garante que StepIndicator/
+    // NavigationButtons não são renderizados enquanto o Preview está ativo
+    // (nenhum "chrome" do wizard aparece ao redor), então este bloco não
+    // precisa mais se sobrepor a nada via posicionamento fixo — só min-h-screen
+    // (ocupa pelo menos uma viewport quando o conteúdo é curto) e cresce
+    // normalmente, deixando a PÁGINA (body) rolar quando o conteúdo é maior.
+    <div className="relative min-h-screen w-full overflow-x-hidden bg-black">
       {redirectingToCheckout ? (
-        <div className="flex h-full w-full items-center justify-center text-white">
+        <div className="flex min-h-screen w-full items-center justify-center text-white">
           <div className="flex flex-col items-center gap-4">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-yellow-400/30 border-t-yellow-400" />
             <p className="text-slate-300">Preparando o pagamento...</p>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { useOptionalExperience } from "../experience/context/ExperienceContext";
+import { getInformationStepConfig } from "../experience/informationStepConfig";
 import type { Experience } from "../experience/types";
 import { getThemeVisual } from "@/lib/themeRegistry";
 
@@ -138,8 +139,25 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
   // always falls back to a complete definition (see lib/themeRegistry.ts).
   const visual = getThemeVisual(experience.theme);
 
+  // Polimento do Preview — Problema 2: a pergunta mostrada junto da resposta
+  // em LetterChapter é sempre a mesma pergunta que InformationStep já exibiu
+  // para este tipo (ver informationStepConfig.ts, única fonte de verdade das
+  // perguntas por tipo) — nunca uma segunda cópia hardcoded aqui, e nunca um
+  // `if (experience.type === ...)`. undefined para "custom" (o único tipo
+  // sem essa pergunta) ou para um tipo desconhecido/legado; LetterChapter cai
+  // para um rótulo genérico nesse caso.
+  const contextQuestion = getInformationStepConfig(experience.type).fields.find(
+    (field) => field.key === "contextAnswer"
+  )?.label;
+
   return (
-    <main className="relative min-h-screen w-full overflow-hidden bg-black">
+    // Etapa do scroll do Preview: sem overflow-hidden aqui — os outros
+    // capítulos (absolute inset-0) não dependem disso pra se conter (cada
+    // um já se auto-clipa na própria raiz — ver PlanetScene/
+    // RecipientRevealChapter/GalaxyChapter/MemoriesCanvas), e o capítulo da
+    // carta precisa poder crescer além de uma viewport sem ser cortado
+    // aqui.
+    <main className="relative min-h-screen w-full bg-black">
       <MusicPlayer
         key={reviveCount}
         provider={experience.music.provider}
@@ -192,7 +210,13 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
         {chapter === "letter" && (
           <motion.div
             key="letter"
-            className="absolute inset-0"
+            // Etapa do scroll do Preview: único capítulo que NÃO é
+            // `absolute inset-0` (todos os outros continuam pinados
+            // exatamente a uma viewport, sem scroll, de propósito — nada
+            // muda neles). Este precisa participar do fluxo normal do
+            // documento para que uma carta grande empurre a altura real de
+            // `main`/da página, em vez de ficar preso a uma altura fixa.
+            className="relative w-full"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -205,6 +229,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
               theme={experience.theme}
               eventDate={experience.eventDate}
               contextAnswer={experience.contextAnswer}
+              contextQuestion={contextQuestion}
               onComplete={() => {
                 send("LETTER_COMPLETE");
               }}

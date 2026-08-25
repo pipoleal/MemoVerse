@@ -111,6 +111,23 @@ export default function ExperienceBuilder() {
     );
   }
 
+  // Etapa do scroll do Preview: o Preview precisa poder crescer além de uma
+  // viewport (uma carta grande) e deixar a PÁGINA rolar normalmente — o que
+  // é impossível enquanto StepIndicator/NavigationButtons continuam
+  // montados ao redor dele, porque PreviewStep então precisa ficar `fixed`
+  // só para cobri-los visualmente, e um elemento `fixed` nunca cresce com o
+  // scroll da página (por definição, fica preso ao viewport). Retornar só
+  // <PreviewStep /> aqui — sem StepIndicator, sem o <section> com
+  // max-w-5xl/padding, sem NavigationButtons — é o que permite a
+  // PreviewStep.tsx abandonar o `fixed inset-0` e virar um bloco normal que
+  // cresce com o conteúdo. Visualmente idêntico a antes (esses elementos já
+  // ficavam cobertos pelo overlay fixed do Preview; agora simplesmente não
+  // são renderizados enquanto o Preview está ativo, em vez de escondidos
+  // atrás dele).
+  if (step === 8) {
+    return <PreviewStep />;
+  }
+
   return (
     <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-10">
       <StepIndicator step={step} />
@@ -157,8 +174,6 @@ export default function ExperienceBuilder() {
         {step === 6 && <LetterStep />}
 
         {step === 7 && <MusicStep />}
-
-        {step === 8 && <PreviewStep />}
       </div>
 
       <NavigationButtons

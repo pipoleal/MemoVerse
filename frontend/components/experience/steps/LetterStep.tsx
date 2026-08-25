@@ -138,7 +138,7 @@ export default function LetterStep() {
 
                 <div className={`mx-0 my-6 h-px w-16 ${letterTheme.ornamentClass}`} />
 
-                <div className={`min-h-48 whitespace-pre-wrap text-base leading-7 ${letterTheme.textClass}`}>
+                <div className={`min-h-48 whitespace-pre-wrap wrap-anywhere text-base leading-7 ${letterTheme.textClass}`}>
                   {experience.letter ? (
                     experience.letter
                   ) : (

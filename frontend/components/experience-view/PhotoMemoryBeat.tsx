@@ -170,7 +170,7 @@ export default function PhotoMemoryBeat({ src, caption, index, total }: PhotoMem
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, amount: 0.4 }}
                 transition={{ duration: 0.8, delay: 0.25, ease: "easeOut" }}
-                className="text-sm font-light italic leading-relaxed text-white/75 sm:text-base"
+                className="wrap-anywhere text-sm font-light italic leading-relaxed text-white/75 sm:text-base"
               >
                 {caption}
               </motion.p>

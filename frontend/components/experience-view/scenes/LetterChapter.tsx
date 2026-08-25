@@ -14,10 +14,14 @@ type LetterChapterProps = {
   // components/experience/informationStepConfig.ts) — mesmo texto livre do
   // usuário, nunca resumido/reescrito. Opcional porque "custom" não tem essa
   // pergunta e drafts antigos podem não ter respondido; "" e undefined se
-  // comportam igual (bloco simplesmente não renderiza). Um único preâmbulo
-  // estático para todos os tipos — nenhuma ramificação por experience.type
-  // aqui, de propósito.
+  // comportam igual (bloco simplesmente não renderiza).
   contextAnswer?: string;
+  // A própria pergunta que o usuário respondeu (o `label` do campo
+  // contextAnswer em informationStepConfig.ts para o tipo desta
+  // experiência) — resolvida pelo chamador (ExperienceViewer), nunca aqui:
+  // este componente não sabe nem precisa saber o que é experience.type.
+  // undefined cai num rótulo genérico abaixo.
+  contextQuestion?: string;
   onComplete: () => void;
 };
 
@@ -46,6 +50,7 @@ export default function LetterChapter({
   theme,
   eventDate,
   contextAnswer,
+  contextQuestion,
   onComplete,
 }: LetterChapterProps) {
   const [isVisible, setIsVisible] = useState(false);
@@ -77,23 +82,33 @@ export default function LetterChapter({
   }, []);
 
   return (
+    // Sem scroll interno (pedido explícito): esta section não é mais
+    // `absolute inset-0` — é um bloco normal (`relative min-h-screen`) que
+    // cresce com o conteúdo, deixando quem rola ser a PÁGINA (body), nunca
+    // uma div própria aqui dentro. As 4 decorações abaixo (glow, as duas
+    // ornament-lines e o vignette final) viram `fixed` em vez de
+    // `absolute`: como não são mais relativas a uma section de altura fixa
+    // (ela agora pode ficar bem mais alta que uma viewport numa carta
+    // grande), `fixed` é o que as mantém como pano de fundo ambiente preso
+    // à tela, em vez de esticar/repetir ao longo de toda a altura da
+    // section.
     <section
       aria-label={`Carta para ${recipient}`}
-      className={`absolute inset-0 overflow-hidden text-white ${letterTheme.backdropClass}`}
+      className={`relative min-h-screen w-full overflow-x-hidden text-white ${letterTheme.backdropClass}`}
     >
       <div
-        className={`pointer-events-none absolute left-1/2 top-0 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl ${letterTheme.glowClass}`}
+        className={`pointer-events-none fixed left-1/2 top-0 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl ${letterTheme.glowClass}`}
       />
 
       <div
-        className={`pointer-events-none absolute left-[12%] top-[22%] h-px w-24 ${letterTheme.ornamentClass}`}
+        className={`pointer-events-none fixed left-[12%] top-[22%] h-px w-24 ${letterTheme.ornamentClass}`}
       />
 
       <div
-        className={`pointer-events-none absolute bottom-[18%] right-[10%] h-24 w-24 rounded-full border ${letterTheme.ornamentClass}`}
+        className={`pointer-events-none fixed bottom-[18%] right-[10%] h-24 w-24 rounded-full border ${letterTheme.ornamentClass}`}
       />
 
-      <div className="relative flex min-h-full items-center justify-center px-5 py-10 sm:px-8">
+      <div className="relative flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
         <article
           className={`
             w-full max-w-3xl rounded-[2rem] border p-7 shadow-[0_30px_100px_rgba(0,0,0,0.45)] backdrop-blur-xl
@@ -137,31 +152,41 @@ export default function LetterChapter({
           {/* Segunda pergunta contextual do wizard (contextAnswer) — mesmo
               vocabulário visual do cabeçalho acima (rótulo pequeno em
               uppercase) e do corpo da carta logo abaixo (mesma classe de
-              texto), nunca um estilo à parte. Preâmbulo estático, igual para
-              todos os tipos — só existe quando o usuário de fato respondeu. */}
+              texto), nunca um estilo à parte. Rótulo é a própria pergunta
+              (contextQuestion, resolvida em ExperienceViewer a partir de
+              informationStepConfig.ts) — nunca uma frase genérica; o
+              fallback abaixo só existe para um contextQuestion ausente
+              (nunca deveria acontecer para um tipo com contextAnswer, mas
+              nunca deixa o rótulo em branco). Só existe quando o usuário de
+              fato respondeu. wrap-anywhere (não break-words): uma sequência
+              contínua sem espaços precisa poder quebrar mesmo dentro do
+              item flex do card, o que break-word sozinho não garante. */}
           {contextAnswer && (
             <div className="mb-8">
               <p
                 className={`text-xs font-medium uppercase tracking-[0.35em] sm:tracking-[0.45em] ${letterTheme.secondaryClass}`}
               >
-                Uma coisa que torna isso ainda mais especial
+                {contextQuestion ?? "Uma coisa que torna isso ainda mais especial"}
               </p>
 
               <p
-                className={`mt-3 whitespace-pre-wrap break-words text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
+                className={`mt-3 whitespace-pre-wrap wrap-anywhere text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
               >
                 {contextAnswer}
               </p>
             </div>
           )}
 
-          <div className="max-h-[min(48vh,28rem)] overflow-y-auto pr-2">
-            <p
-              className={`whitespace-pre-wrap break-words text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
-            >
-              {letter}
-            </p>
-          </div>
+          {/* Sem scroll interno (pedido explícito): antes limitado a
+              max-h-[min(48vh,28rem)] com overflow-y-auto próprio — agora o
+              texto flui na altura real que precisar, e é a página (não
+              mais uma caixa interna) que rola quando isso ultrapassa a
+              viewport. */}
+          <p
+            className={`whitespace-pre-wrap wrap-anywhere text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
+          >
+            {letter}
+          </p>
 
           {creator && (
             <footer className="mt-8 border-t border-white/10 pt-6 text-right">
@@ -198,7 +223,7 @@ export default function LetterChapter({
         </article>
       </div>
 
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_30%,rgba(0,0,0,0.65)_100%)]" />
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_center,transparent_30%,rgba(0,0,0,0.65)_100%)]" />
     </section>
   );
 }
