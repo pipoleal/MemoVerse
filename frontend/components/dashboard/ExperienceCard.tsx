@@ -45,7 +45,10 @@ function getDraftAction(status: Exclude<DraftStatus, "published">, id: string): 
   }
 }
 
-function formatDraftDate(draft: Draft) {
+// Exportado (Fase 2 — Minha Galáxia) para o painel de seleção de estrela
+// de GalaxyHub.tsx reaproveitar a mesma formatação de data, em vez de
+// duplicá-la.
+export function formatDraftDate(draft: Draft) {
   const date = draft.event_date ? new Date(`${draft.event_date}T00:00:00`) : new Date(draft.created_at);
   if (Number.isNaN(date.getTime())) return draft.event_date ?? draft.created_at;
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" }).format(date);
