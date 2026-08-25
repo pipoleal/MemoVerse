@@ -17,6 +17,29 @@ type GalaxyTransitionProps = {
 
 const PARTICLE_COUNT = 8000;
 
+// THREE.PointsMaterial with no `map` renders every point as a hard-edged,
+// axis-aligned square (WebGL's raw GL_POINTS rasterization) — that square is
+// the visual artifact this fixes. A real radial-gradient alpha texture makes
+// each particle a soft round mote instead. 64px is plenty since each point
+// only ever covers a handful of screen pixels.
+function createDustTexture(): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+  const center = size / 2;
+  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.35, "rgba(255,244,214,0.8)");
+  gradient.addColorStop(1, "rgba(255,244,214,0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export default function GalaxyTransition({
   active,
   phase,
@@ -24,6 +47,10 @@ export default function GalaxyTransition({
   const pointsRef = useRef<THREE.Points>(null);
   const materialRef =
     useRef<THREE.PointsMaterial>(null);
+
+  // Generated once (real canvas work, not per-frame) — same lifetime as the
+  // component instance, exactly like `geometry` below.
+  const dustTexture = useMemo(() => createDustTexture(), []);
 
   const geometry = useMemo(() => {
     const positions = new Float32Array(
@@ -360,8 +387,10 @@ export default function GalaxyTransition({
     >
       <pointsMaterial
         ref={materialRef}
-        color={0xffffff}
-        size={0.018}
+        map={dustTexture}
+        color={0xfff2d0}
+        size={0.026}
+        sizeAttenuation
         transparent
         opacity={0}
         depthWrite={false}
