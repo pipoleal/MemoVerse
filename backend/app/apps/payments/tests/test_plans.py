@@ -44,8 +44,11 @@ class PlanListViewTests(TestCase):
         weekly = next(item for item in response.data if item["code"] == "weekly")
         self.assertEqual(weekly["name"], "MemoVerse 1 Semana")
         # DecimalField serializa como string por padrão no DRF (evita
-        # arredondamento de float) — o contrato da API é "19.90", não 19.90.
-        self.assertEqual(weekly["price"], "19.90")
+        # arredondamento de float) — o contrato da API é "0.10", não 0.10.
+        # TEMPORÁRIO: preço original 19.90, reduzido por
+        # 0007_temp_weekly_price_for_checkout_testing para testes reais de
+        # checkout — reverter junto com essa migration.
+        self.assertEqual(weekly["price"], "0.10")
         self.assertEqual(weekly["currency"], "BRL")
         self.assertEqual(weekly["features"]["duration_days"], 7)
         self.assertIs(weekly["features"]["is_lifetime"], False)

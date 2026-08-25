@@ -134,10 +134,13 @@ class CheckoutPlanResolutionTests(TestCase):
         self.client = auth_client(self.user)
 
     def test_weekly_plan_creates_payment_of_1990(self):
+        # TEMPORÁRIO: preço original 19.90, reduzido para 0.10 por
+        # 0007_temp_weekly_price_for_checkout_testing (testes reais de
+        # checkout) — reverter junto com essa migration.
         with patch_mp_client():
             self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("19.90"))
+        self.assertEqual(payment.amount, Decimal("0.10"))
 
     def test_lifetime_galaxy_plan_creates_payment_of_3990(self):
         with patch_mp_client():
@@ -275,8 +278,10 @@ class CheckoutResponsePlanDetailsTests(TestCase):
         with patch_mp_client():
             response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         # DecimalField serializa como string por padrão no DRF — o contrato
-        # da API é "19.90", não 19.90.
-        self.assertEqual(response.data["plan"]["price"], "19.90")
+        # da API é "0.10", não 0.10. TEMPORÁRIO: preço original 19.90,
+        # reduzido por 0007_temp_weekly_price_for_checkout_testing — reverter
+        # junto com essa migration.
+        self.assertEqual(response.data["plan"]["price"], "0.10")
         self.assertEqual(response.data["plan"]["currency"], "BRL")
         features = response.data["plan"]["features"]
         self.assertEqual(features["duration_days"], 7)

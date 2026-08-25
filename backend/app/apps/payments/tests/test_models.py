@@ -82,7 +82,10 @@ class CommercialPlansSeedTests(TestCase):
     def test_weekly_plan_values(self):
         plan = Plan.objects.get(code="weekly")
         self.assertEqual(plan.name, "MemoVerse 1 Semana")
-        self.assertEqual(plan.price, Decimal("19.90"))
+        # TEMPORÁRIO: preço seedado por 0005 é 19.90, mas
+        # 0007_temp_weekly_price_for_checkout_testing reduz para 0.10 para
+        # testes reais de checkout — reverter junto com essa migration.
+        self.assertEqual(plan.price, Decimal("0.10"))
         self.assertEqual(plan.currency, "BRL")
         self.assertTrue(plan.is_active)
         self.assertEqual(plan.get_feature("duration_days"), 7)
