@@ -6,7 +6,6 @@ import { Canvas } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 
 import CameraRig from "@/components/universe/CameraRig";
-import ShootingStars from "@/components/universe/ShootingStars";
 import GalaxyTransition from "../GalaxyTransition";
 
 type GalaxyChapterProps = {
@@ -53,7 +52,6 @@ export default function GalaxyChapter({ onRevive, isOwner }: GalaxyChapterProps)
           <ambientLight intensity={0.8} />
           <Stars radius={250} depth={80} count={12000} factor={6} saturation={0} fade speed={0.35} />
           <GalaxyTransition active phase={transitionPhase} />
-          <ShootingStars />
           <CameraRig />
         </Canvas>
       </div>

@@ -90,9 +90,26 @@ export default function GalaxyTransition({
        * É essa nuvem que queremos
        * preservar porque ela ficou
        * bonita no seu vídeo.
+       *
+       * randomA/randomC eram usados de forma
+       * linear (uniforme) — isso faz a nuvem
+       * terminar num corte duro (mesma
+       * quantidade de partículas até a borda,
+       * nenhuma depois), que sob blending
+       * aditivo com milhares de partículas
+       * sobrepostas satura para um bloco
+       * branco de cara reta, não uma nuvem
+       * suave. Elevar a uma potência > 1
+       * concentra a densidade perto do centro
+       * e afina gradualmente até a borda — a
+       * mesma extensão (raio/altura) de antes,
+       * só sem o corte abrupto.
        */
+      const radiusFalloff =
+        Math.pow(randomA, 2.2);
+
       const radius =
-        0.35 + randomA * 2.0;
+        0.35 + radiusFalloff * 2.0;
 
       const angle =
         randomB *
@@ -103,9 +120,17 @@ export default function GalaxyTransition({
         Math.cos(angle) *
         radius;
 
+      const ySign =
+        randomC < 0.5 ? -1 : 1;
+
+      const yFalloff =
+        Math.pow(
+          Math.abs(randomC - 0.5) * 2,
+          2.2
+        );
+
       positions[index + 1] =
-        (randomC - 0.5) *
-        1.4;
+        ySign * yFalloff * 0.7;
 
       positions[index + 2] =
         Math.sin(angle) *
@@ -151,18 +176,27 @@ export default function GalaxyTransition({
      * =================================
      */
 
+    /*
+     * Tetos reduzidos (eram 0.85/1/0.75): com
+     * milhares de partículas aditivas
+     * sobrepostas, opacidade máxima = 1
+     * satura a região mais densa para branco
+     * sólido — reduzir o teto mantém a nuvem
+     * brilhante e visível sem nunca "estourar"
+     * para um bloco cheio.
+     */
     let targetOpacity = 0;
 
     if (phase === "particles") {
-      targetOpacity = 0.85;
+      targetOpacity = 0.5;
     }
 
     if (phase === "galaxy") {
-      targetOpacity = 1;
+      targetOpacity = 0.65;
     }
 
     if (phase === "message") {
-      targetOpacity = 0.75;
+      targetOpacity = 0.45;
     }
 
     if (material) {
@@ -389,7 +423,7 @@ export default function GalaxyTransition({
         ref={materialRef}
         map={dustTexture}
         color={0xfff2d0}
-        size={0.026}
+        size={0.016}
         sizeAttenuation
         transparent
         opacity={0}
