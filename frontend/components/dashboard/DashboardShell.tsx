@@ -3,6 +3,7 @@
 import { type ReactNode, useState } from "react";
 
 import Universe from "@/components/universe/Universe";
+import Footer from "@/components/layout/Footer";
 import Sidebar from "./Sidebar";
 
 // Layout shell: fixed sidebar on desktop, drawer on mobile/tablet (state
@@ -41,6 +42,8 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
           <main className="mx-auto max-w-7xl px-6 py-10 sm:px-8 lg:px-10 lg:py-16">
             {children}
           </main>
+
+          <Footer />
         </div>
       </div>
     </div>

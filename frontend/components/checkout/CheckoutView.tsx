@@ -45,8 +45,27 @@ type Phase =
 // "MemoVerse 1 Semana" -> "1 SEMANA" — a live transform of the real plan
 // name from the API, never a separate hardcoded title per plan_code (which
 // could silently drift from the backend's Plan.name).
+// Comunicação comercial: "Vitalício" virou "Anual" só na apresentação.
+// Plan.name (banco, seedado em
+// payments/migrations/0005_seed_commercial_plans.py) e
+// duration_days/is_lifetime/preço (ver
+// experiences/services/publication_service.py) continuam exatamente como
+// estão — nenhuma lógica de cobrança/duração é tocada aqui, só o texto
+// exibido nestes dois pontos de renderização.
+function displayPlanName(name: string): string {
+  return name.replace(/Vitalício/gi, "Anual");
+}
+
+// "Disponível para sempre" (um dos highlights vindos do banco, ver
+// payments/migrations/0006_add_plan_highlights.py) contradiria um plano
+// agora chamado "Anual" na tela — mesmo tipo de substituição só de
+// apresentação, nunca alterando o array que vem da API.
+function displayPlanHighlight(highlight: string): string {
+  return highlight.replace(/Dispon[ií]vel para sempre/gi, "Disponível por 1 ano");
+}
+
 function planCardTitle(name: string): string {
-  return name.replace(/^MemoVerse\s+/i, "").toUpperCase();
+  return displayPlanName(name).replace(/^MemoVerse\s+/i, "").toUpperCase();
 }
 
 // Reused wherever the currently-selected/checked-out plan needs to be
@@ -357,7 +376,7 @@ function PlanSummaryBlock({ plan }: { plan: Plan | null }) {
   return (
     <div>
       <p className="text-sm uppercase tracking-widest text-slate-400">Plano</p>
-      <p className="mt-1 text-xl font-bold text-white">{plan.name}</p>
+      <p className="mt-1 text-xl font-bold text-white">{displayPlanName(plan.name)}</p>
       <p className="mt-4 text-sm uppercase tracking-widest text-slate-400">Total</p>
       <p className="text-2xl font-bold text-yellow-400">{formatPlanPrice(plan.price, plan.currency)}</p>
     </div>
@@ -396,7 +415,7 @@ function PlanCard({ plan, onSelect }: { plan: Plan; onSelect: () => void }) {
         {plan.features.highlights.map((item) => (
           <li key={item} className="flex items-start gap-2">
             <span className="mt-0.5 text-yellow-400">✓</span>
-            {item}
+            {displayPlanHighlight(item)}
           </li>
         ))}
       </ul>
