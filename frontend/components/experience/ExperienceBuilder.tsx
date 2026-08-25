@@ -120,8 +120,23 @@ export default function ExperienceBuilder() {
           <TypeStep
             value={experience.type}
             onChange={(value) => {
+              // Etapa 1 da correção de contaminação entre tipos: title/
+              // shortMessage/contextAnswer são os únicos campos cujo
+              // *sentido* é definido pelo tipo (ver informationStepConfig.ts)
+              // — trocar de tipo sem limpá-los deixa a resposta de um
+              // contexto (ex.: "Nosso Pedido de Namoro ❤️", "Eu sinto que...")
+              // visível sob o rótulo de outro tipo. `letter` fica de fora de
+              // propósito (ver instrução da tarefa) — o usuário pode ter
+              // escrito uma carta que quer manter mesmo trocando o tipo. Só
+              // limpa quando o tipo de fato muda (re-selecionar o mesmo tipo
+              // é a não-mudança, nunca deve apagar nada).
+              const changedType = value !== experience.type;
+
               updateExperience({
                 type: value,
+                ...(changedType
+                  ? { title: "", shortMessage: "", contextAnswer: "" }
+                  : {}),
               });
 
               setError("");

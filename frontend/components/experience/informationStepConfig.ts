@@ -48,9 +48,11 @@ export type InformationStepConfig = {
   fields: InformationField[];
 };
 
-// The 4 fields every type has always had — same labels/copy as before this
-// change, except `recipient`, which a handful of types override (e.g.
-// "Homenageado" for tribute) via the `recipient` param.
+// The 4 fields every type has always had — except `recipient`, which a
+// handful of types override (e.g. "Homenageado" for tribute) via the
+// `recipient` param. `title`'s placeholder is deliberately neutral (not
+// tied to any one type) — it used to read "Nosso Pedido de Namoro ❤️",
+// which leaked dating-specific copy into every other type's form.
 function baseFields(recipient?: {
   label?: string;
   description?: string;
@@ -61,7 +63,7 @@ function baseFields(recipient?: {
       key: "title",
       label: "Título da experiência",
       description: "Dê um nome especial para essa experiência.",
-      placeholder: "Nosso Pedido de Namoro ❤️",
+      placeholder: "Um nome especial para essa experiência ✨",
       component: "input",
       required: true,
     },
