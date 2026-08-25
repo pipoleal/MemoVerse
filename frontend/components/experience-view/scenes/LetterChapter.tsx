@@ -10,6 +10,14 @@ type LetterChapterProps = {
   letter: string;
   theme: string;
   eventDate: string;
+  // Segunda pergunta contextual do wizard (ver
+  // components/experience/informationStepConfig.ts) — mesmo texto livre do
+  // usuário, nunca resumido/reescrito. Opcional porque "custom" não tem essa
+  // pergunta e drafts antigos podem não ter respondido; "" e undefined se
+  // comportam igual (bloco simplesmente não renderiza). Um único preâmbulo
+  // estático para todos os tipos — nenhuma ramificação por experience.type
+  // aqui, de propósito.
+  contextAnswer?: string;
   onComplete: () => void;
 };
 
@@ -37,6 +45,7 @@ export default function LetterChapter({
   letter,
   theme,
   eventDate,
+  contextAnswer,
   onComplete,
 }: LetterChapterProps) {
   const [isVisible, setIsVisible] = useState(false);
@@ -124,6 +133,27 @@ export default function LetterChapter({
             aria-hidden="true"
             className={`mx-auto my-8 h-px w-16 ${letterTheme.ornamentClass}`}
           />
+
+          {/* Segunda pergunta contextual do wizard (contextAnswer) — mesmo
+              vocabulário visual do cabeçalho acima (rótulo pequeno em
+              uppercase) e do corpo da carta logo abaixo (mesma classe de
+              texto), nunca um estilo à parte. Preâmbulo estático, igual para
+              todos os tipos — só existe quando o usuário de fato respondeu. */}
+          {contextAnswer && (
+            <div className="mb-8">
+              <p
+                className={`text-xs font-medium uppercase tracking-[0.35em] sm:tracking-[0.45em] ${letterTheme.secondaryClass}`}
+              >
+                Uma coisa que torna isso ainda mais especial
+              </p>
+
+              <p
+                className={`mt-3 whitespace-pre-wrap break-words text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
+              >
+                {contextAnswer}
+              </p>
+            </div>
+          )}
 
           <div className="max-h-[min(48vh,28rem)] overflow-y-auto pr-2">
             <p

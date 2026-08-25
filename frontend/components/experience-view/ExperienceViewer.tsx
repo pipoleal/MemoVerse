@@ -204,6 +204,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
               letter={experience.letter}
               theme={experience.theme}
               eventDate={experience.eventDate}
+              contextAnswer={experience.contextAnswer}
               onComplete={() => {
                 send("LETTER_COMPLETE");
               }}
