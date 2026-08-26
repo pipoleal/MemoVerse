@@ -42,3 +42,37 @@ body {
 .star {
   animation: twinkle infinite ease-in-out;
 }
+
+/* Entrada da landing de lançamento (components/launch/ComingSoonView.tsx).
+   CSS puro em vez de framer-motion: ver comentário em fadeUpStyle() no
+   componente para o porquê (o framer-motion 13 nunca disparava a transição
+   initial->animate no build de produção real, deixando a página inteira
+   invisível). `both` mantém o estado "from" antes do animation-delay
+   (definido por elemento via style inline) e o estado "to" depois que a
+   animação termina. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+    filter: blur(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.fade-up {
+  animation: fade-up 1s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}

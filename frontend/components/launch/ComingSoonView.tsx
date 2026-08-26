@@ -1,7 +1,6 @@
 "use client";
 
 import { Stars } from "@react-three/drei";
-import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -48,9 +47,30 @@ function CountdownUnit({ value, label }: { value: number | null; label: string }
   );
 }
 
+// Delay de entrada por elemento via CSS puro (.fade-up + animation-delay
+// inline, ver globals.css) — não framer-motion. Motivo: confirmado ao vivo
+// em produção (next build && next start, sem Canvas, sem LaunchMusicPlayer,
+// sem re-renders do countdown, com useReducedMotion() travado em false —
+// eliminando uma a uma toda outra variável) que a transição initial→animate
+// do framer-motion 13 simplesmente nunca dispara neste build de produção
+// (Next.js 16 + React 19.2) — os elementos ficam presos para sempre no
+// estado "initial" (opacity:0), tornando a página inteira invisível para
+// quem visita, apesar do conteúdo existir no DOM. Nunca reproduziu em
+// `next dev` (que não passa pela otimização/pipeline de build real) — só
+// apareceu com o build de produção de verdade. CSS puro não depende de
+// nenhum ciclo de vida de biblioteca JS para disparar a animação — o
+// navegador já cuida disso sozinho a partir do primeiro paint do elemento,
+// funciona de forma idêntica em SSR/hidratação/produção, e ainda respeita
+// prefers-reduced-motion nativamente (ver globals.css), sem precisar do
+// hook useReducedMotion() do framer-motion (que tem seu próprio problema
+// documentado de divergir entre servidor `null` e cliente `boolean` no
+// primeiro render).
+function fadeUpStyle(delaySeconds: number): React.CSSProperties {
+  return { animationDelay: `${delaySeconds}s` };
+}
+
 export default function ComingSoonView() {
   const router = useRouter();
-  const shouldReduceMotion = useReducedMotion();
 
   // null até o primeiro efeito rodar no cliente (nunca calculado durante
   // SSR nem durante o próprio render de hidratação) — Date.now() muda
@@ -93,15 +113,6 @@ export default function ComingSoonView() {
     router.refresh();
   }, [remaining, router]);
 
-  const fadeUp = (delay: number) =>
-    shouldReduceMotion
-      ? {}
-      : {
-          initial: { opacity: 0, y: 20, filter: "blur(10px)" },
-          animate: { opacity: 1, y: 0, filter: "blur(0px)" },
-          transition: { duration: 1, delay },
-        };
-
   return (
     <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-6 py-16 text-center">
       <div className="absolute inset-0 -z-10">
@@ -120,26 +131,26 @@ export default function ComingSoonView() {
       <LaunchMusicPlayer />
 
       <div className="relative z-10 flex max-w-2xl flex-col items-center">
-        <motion.p
-          {...fadeUp(0.1)}
-          className="mb-6 text-xs font-semibold uppercase tracking-[0.4em] text-yellow-400 sm:text-sm"
+        <p
+          style={fadeUpStyle(0.1)}
+          className="fade-up mb-6 text-xs font-semibold uppercase tracking-[0.4em] text-yellow-400 sm:text-sm"
         >
           Lançamento em breve
-        </motion.p>
+        </p>
 
-        <motion.h1
-          {...fadeUp(0.3)}
-          className="bg-linear-to-r from-white via-slate-200 to-yellow-300 bg-clip-text text-6xl font-black tracking-tight text-transparent sm:text-7xl md:text-8xl"
+        <h1
+          style={fadeUpStyle(0.3)}
+          className="fade-up bg-linear-to-r from-white via-slate-200 to-yellow-300 bg-clip-text text-6xl font-black tracking-tight text-transparent sm:text-7xl md:text-8xl"
         >
           MemoVerse
-        </motion.h1>
+        </h1>
 
-        <motion.p {...fadeUp(0.5)} className="mt-6 text-lg text-slate-300 sm:text-xl">
+        <p style={fadeUpStyle(0.5)} className="fade-up mt-6 text-lg text-slate-300 sm:text-xl">
           Suas memórias merecem um universo.
-        </motion.p>
+        </p>
 
-        <motion.div
-          {...fadeUp(0.7)}
+        <div
+          style={fadeUpStyle(0.7)}
           role="timer"
           aria-label={
             remaining === null
@@ -148,7 +159,7 @@ export default function ComingSoonView() {
                 ? `Faltam ${remaining.days} dias, ${remaining.hours} horas, ${remaining.minutes} minutos e ${remaining.seconds} segundos para o lançamento`
                 : "É hora de começar"
           }
-          className="mt-10 flex flex-col items-center gap-4"
+          className="fade-up mt-10 flex flex-col items-center gap-4"
         >
           {remaining === null || remaining.totalMs > 0 ? (
             <div className="flex items-start gap-3 sm:gap-6">
@@ -165,11 +176,11 @@ export default function ComingSoonView() {
           )}
 
           <p className="text-sm text-slate-400 sm:text-base">31 de agosto · 18:00</p>
-        </motion.div>
+        </div>
 
-        <motion.p {...fadeUp(0.9)} className="mt-10 max-w-md text-sm text-slate-400 sm:text-base">
+        <p style={fadeUpStyle(0.9)} className="fade-up mt-10 max-w-md text-sm text-slate-400 sm:text-base">
           Prepare-se para transformar momentos especiais em experiências inesquecíveis.
-        </motion.p>
+        </p>
       </div>
     </main>
   );
