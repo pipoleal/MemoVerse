@@ -1,15 +1,11 @@
-"use client";
+import GalaxyView from "@/components/dashboard/GalaxyView";
 
-import DashboardShell from "@/components/dashboard/DashboardShell";
-import GalaxyHub from "@/components/dashboard/GalaxyHub";
-import { useGalaxyData } from "@/components/dashboard/useGalaxyData";
+// Força renderização dinâmica. `export const dynamic` é ignorado
+// silenciosamente em arquivos "use client" — precisa estar num Server
+// Component. Ver comentário completo em app/login/page.tsx sobre o motivo
+// (nonce de CSP incompatível com páginas estáticas).
+export const dynamic = "force-dynamic";
 
 export default function GalaxyPage() {
-  const { drafts, loading, error } = useGalaxyData();
-
-  return (
-    <DashboardShell>
-      <GalaxyHub drafts={drafts} loading={loading} error={error} />
-    </DashboardShell>
-  );
+  return <GalaxyView />;
 }

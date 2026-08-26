@@ -1,23 +1,11 @@
-"use client";
+import DashboardView from "@/components/dashboard/DashboardView";
 
-import DashboardHeader from "@/components/dashboard/DashboardHeader";
-import DashboardShell from "@/components/dashboard/DashboardShell";
-import ExperienceSection from "@/components/dashboard/ExperienceSection";
-import HeroActions from "@/components/dashboard/HeroActions";
-import JourneyStats from "@/components/dashboard/JourneyStats";
-import { useDashboardData } from "@/components/dashboard/useDashboardData";
+// Força renderização dinâmica. `export const dynamic` é ignorado
+// silenciosamente em arquivos "use client" — precisa estar num Server
+// Component. Ver comentário completo em app/login/page.tsx sobre o motivo
+// (nonce de CSP incompatível com páginas estáticas).
+export const dynamic = "force-dynamic";
 
 export default function DashboardPage() {
-  const { drafts, loading, error } = useDashboardData();
-
-  return (
-    <DashboardShell>
-      <div className="flex flex-col gap-14">
-        <DashboardHeader />
-        <HeroActions />
-        <JourneyStats drafts={drafts} loading={loading} error={error} />
-        <ExperienceSection drafts={drafts} loading={loading} error={error} />
-      </div>
-    </DashboardShell>
-  );
+  return <DashboardView />;
 }

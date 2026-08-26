@@ -36,7 +36,7 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
     fetchMe()
       .then((me) => {
         if (cancelled) return;
-        setState(me.is_superuser ? { status: "authorized", me } : { status: "forbidden" });
+        setState(me.is_admin ? { status: "authorized", me } : { status: "forbidden" });
       })
       .catch(() => {
         // 401 (token inválido/expirado e refresh também falhou) já é
