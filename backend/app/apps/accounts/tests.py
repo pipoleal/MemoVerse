@@ -1,5 +1,5 @@
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -115,6 +115,111 @@ class AuthThrottlingTests(TestCase):
             self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
         response = self.client.post(LOGOUT_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class RateLimitProxyIdentificationTests(TestCase):
+    """Auditoria de segurança (Achado #1) — REST_FRAMEWORK["NUM_PROXIES"] = 1.
+
+    Sem NUM_PROXIES, SimpleRateThrottle.get_ident() usa X-Forwarded-For
+    inteiro e literal — um cliente que varia esse header a cada requisição
+    nunca bate no limite (confirmado manualmente: 15 tentativas de login,
+    XFF diferente em cada uma, nenhuma recebeu 429). Com NUM_PROXIES=1,
+    apenas o ÚLTIMO endereço da lista (o que o proxy confiável do Render
+    anexaria, nunca o que o próprio cliente envia) identifica o chamador.
+
+    Formato do header simulado abaixo — "<valor-forjado-pelo-cliente>,
+    <ip-real-anexado-pelo-proxy>" — é exatamente a forma de
+    X-Forwarded-For que chega à aplicação quando ela está atrás de UM
+    proxy confiável que anexa (nunca substitui) o IP real ao que já veio
+    na requisição, o comportamento padrão de proxies reversos (e do Render
+    em particular) e a premissa que NUM_PROXIES=1 assume.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def _register_payload(self, email="user@example.com"):
+        return {
+            "email": email,
+            "first_name": "Ana",
+            "last_name": "Silva",
+            "password": "super-secret-123",
+        }
+
+    def _login_attempt(self, *, x_forwarded_for=None, password="wrong-password"):
+        kwargs = {}
+        if x_forwarded_for is not None:
+            kwargs["HTTP_X_FORWARDED_FOR"] = x_forwarded_for
+        return self.client.post(
+            LOGIN_URL,
+            {"email": "nobody@example.com", "password": password},
+            format="json",
+            **kwargs,
+        )
+
+    def test_varying_the_forwarded_for_prefix_no_longer_bypasses_the_login_throttle(self):
+        # O IP real (o que o proxy confiável anexaria) é sempre o mesmo —
+        # só o prefixo que um "cliente" controlaria varia a cada tentativa,
+        # exatamente como no bypass demonstrado na auditoria.
+        real_client_ip = "203.0.113.9"
+        for attempt in range(10):
+            response = self._login_attempt(x_forwarded_for=f"10.0.0.{attempt},{real_client_ip}")
+            self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        response = self._login_attempt(x_forwarded_for=f"10.0.0.99,{real_client_ip}")
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Variar o prefixo de X-Forwarded-For não deve mais escapar do rate limit.",
+        )
+
+    def test_different_real_clients_behind_the_trusted_proxy_are_not_merged(self):
+        # Dois clientes DE VERDADE, distintos (IPs diferentes anexados pelo
+        # proxy confiável) — cada um deve ter seu próprio limite, nunca
+        # compartilhado com o outro só porque um dia passaram pelo mesmo
+        # proxy.
+        for _ in range(10):
+            response = self._login_attempt(x_forwarded_for="attacker-prefix,203.0.113.1")
+            self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        # Um segundo cliente real (IP final diferente) não deveria já estar
+        # bloqueado pelas 10 tentativas do primeiro.
+        response = self._login_attempt(x_forwarded_for="attacker-prefix,203.0.113.2")
+        self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_login_without_any_forwarded_for_header_still_throttles_via_remote_addr(self):
+        # Sem X-Forwarded-For nenhum (ex.: acesso direto, sem proxy na
+        # frente, como no dev local) — comportamento inalterado: usa
+        # REMOTE_ADDR, mesmo padrão de antes desta configuração.
+        for _ in range(10):
+            response = self._login_attempt(x_forwarded_for=None)
+            self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        response = self._login_attempt(x_forwarded_for=None)
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_varying_the_forwarded_for_prefix_no_longer_bypasses_the_register_throttle(self):
+        # Confirma que a correção protege o REST_FRAMEWORK inteiro (uma
+        # configuração global), não só o endpoint de login — sem duplicar
+        # nenhuma lógica de identificação de IP por view.
+        real_client_ip = "203.0.113.9"
+        for attempt in range(10):
+            response = self.client.post(
+                REGISTER_URL,
+                self._register_payload(email=f"user{attempt}@example.com"),
+                format="json",
+                HTTP_X_FORWARDED_FOR=f"10.0.0.{attempt},{real_client_ip}",
+            )
+            self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        response = self.client.post(
+            REGISTER_URL,
+            self._register_payload(email="user-final@example.com"),
+            format="json",
+            HTTP_X_FORWARDED_FOR=f"10.0.0.99,{real_client_ip}",
+        )
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
 
@@ -419,10 +524,12 @@ ME_URL = "/api/auth/me/"
 
 
 class MeViewTests(TestCase):
-    """Etapa 9B.5: /api/auth/me/ é a única fonte de verdade para o
-    frontend saber se o usuário logado é admin (is_superuser) — o token
-    JWT em si nunca carrega isso (LoginSerializer/RefreshView são os
-    padrões do SimpleJWT, sem custom claims)."""
+    """Etapa 9B.5/9B.6: /api/auth/me/ é a única fonte de verdade para o
+    frontend saber se o usuário logado é admin — o token JWT em si nunca
+    carrega isso (LoginSerializer/RefreshView são os padrões do SimpleJWT,
+    sem custom claims). is_admin (9B.6) é a decisão completa
+    (is_superuser OU e-mail == settings.MEMOVERSE_ADMIN_EMAIL); o
+    frontend nunca deve olhar is_superuser diretamente."""
 
     def setUp(self):
         self.client = APIClient()
@@ -451,8 +558,9 @@ class MeViewTests(TestCase):
         self.assertEqual(response.data["first_name"], "Ana")
         self.assertEqual(response.data["last_name"], "Silva")
         self.assertIs(response.data["is_superuser"], False)
+        self.assertIs(response.data["is_admin"], False)
 
-    def test_superuser_sees_is_superuser_true(self):
+    def test_superuser_sees_is_superuser_true_and_is_admin_true(self):
         admin = User.objects.create_user(
             email="admin@example.com", first_name="Admin", last_name="User",
             password="strong-pass-123", is_staff=True, is_superuser=True,
@@ -461,6 +569,7 @@ class MeViewTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIs(response.data["is_superuser"], True)
+        self.assertIs(response.data["is_admin"], True)
 
     def test_staff_without_superuser_still_sees_is_superuser_false(self):
         # Mesmo perfil de conta técnica usado pelo sandbox-apro-runner —
@@ -473,6 +582,67 @@ class MeViewTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIs(response.data["is_superuser"], False)
+        self.assertIs(response.data["is_admin"], False)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_email_matching_memoverse_admin_email_grants_is_admin_true(self):
+        # Etapa 9B.6: usuário comum (nunca is_superuser=True), mas com o
+        # e-mail configurado em MEMOVERSE_ADMIN_EMAIL — deve virar admin
+        # via is_admin, sem nenhuma senha/hash envolvida.
+        user = User.objects.create_user(
+            email="memoversebr@gmail.com", first_name="Memo", last_name="Verse",
+            password="strong-pass-123",
+        )
+        response = self._authed_client_for(user).get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIs(response.data["is_superuser"], False)
+        self.assertIs(response.data["is_admin"], True)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="MemoverseBR@Gmail.com")
+    def test_email_admin_match_is_case_insensitive(self):
+        user = User.objects.create_user(
+            email="memoversebr@gmail.com", first_name="Memo", last_name="Verse",
+            password="strong-pass-123",
+        )
+        response = self._authed_client_for(user).get(ME_URL)
+
+        self.assertIs(response.data["is_admin"], True)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_different_email_does_not_grant_is_admin(self):
+        user = User.objects.create_user(
+            email="someone-else@example.com", first_name="Someone", last_name="Else",
+            password="strong-pass-123",
+        )
+        response = self._authed_client_for(user).get(ME_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIs(response.data["is_admin"], False)
+
+    def test_without_memoverse_admin_email_configured_matching_email_is_not_admin(self):
+        # MEMOVERSE_ADMIN_EMAIL não setada (default "") — comportamento
+        # idêntico ao de antes da 9B.6: só is_superuser abre o painel,
+        # mesmo que o e-mail "coincida" com o que seria usado em produção.
+        user = User.objects.create_user(
+            email="memoversebr@gmail.com", first_name="Memo", last_name="Verse",
+            password="strong-pass-123",
+        )
+        response = self._authed_client_for(user).get(ME_URL)
+
+        self.assertIs(response.data["is_admin"], False)
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_inactive_user_with_matching_email_is_rejected_at_auth_layer(self):
+        user = User.objects.create_user(
+            email="memoversebr@gmail.com", first_name="Memo", last_name="Verse",
+            password="strong-pass-123", is_active=False,
+        )
+        response = self._authed_client_for(user).get(ME_URL)
+
+        # JWTAuthentication já rejeita usuário inativo antes de qualquer
+        # permissão/is_admin ser avaliado.
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_never_reveals_another_users_data(self):
         User.objects.create_user(
@@ -485,3 +655,52 @@ class MeViewTests(TestCase):
 
         self.assertEqual(response.data["email"], "me@example.com")
         self.assertNotEqual(response.data["email"], "other@example.com")
+
+
+class IsProductionAdminHelperTests(TestCase):
+    """Testes diretos de is_production_admin() (Etapa 9B.6) — a função
+    pura reaproveitada por IsProductionAdmin e por MeView.is_admin, sem
+    passar por HTTP."""
+
+    def test_anonymous_user_is_never_admin(self):
+        from django.contrib.auth.models import AnonymousUser
+
+        from apps.accounts.permissions import is_production_admin
+
+        self.assertFalse(is_production_admin(AnonymousUser()))
+
+    def test_none_user_is_never_admin(self):
+        from apps.accounts.permissions import is_production_admin
+
+        self.assertFalse(is_production_admin(None))
+
+    def test_superuser_is_admin_regardless_of_memoverse_admin_email(self):
+        from apps.accounts.permissions import is_production_admin
+
+        user = User.objects.create_user(
+            email="admin@example.com", password="strong-pass-123", is_superuser=True, is_staff=True
+        )
+        self.assertTrue(is_production_admin(user))
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="")
+    def test_regular_user_is_not_admin_when_setting_is_empty(self):
+        from apps.accounts.permissions import is_production_admin
+
+        user = User.objects.create_user(email="user@example.com", password="strong-pass-123")
+        self.assertFalse(is_production_admin(user))
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_active_user_with_matching_email_is_admin(self):
+        from apps.accounts.permissions import is_production_admin
+
+        user = User.objects.create_user(email="memoversebr@gmail.com", password="strong-pass-123")
+        self.assertTrue(is_production_admin(user))
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="memoversebr@gmail.com")
+    def test_inactive_user_with_matching_email_is_not_admin(self):
+        from apps.accounts.permissions import is_production_admin
+
+        user = User.objects.create_user(
+            email="memoversebr@gmail.com", password="strong-pass-123", is_active=False
+        )
+        self.assertFalse(is_production_admin(user))

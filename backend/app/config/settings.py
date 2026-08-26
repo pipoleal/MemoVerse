@@ -200,6 +200,33 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    # Auditoria de segurança (Achado #1): sem NUM_PROXIES, o
+    # SimpleRateThrottle do DRF usa o header X-Forwarded-For inteiro,
+    # literal, exatamente como o cliente o envia — qualquer requisição pode
+    # forjar um valor diferente a cada tentativa e nunca bater no limite
+    # (confirmado: 15 tentativas de login com XFF diferente a cada uma,
+    # nenhuma recebeu 429).
+    #
+    # Topologia confirmada (não presumida): produção roda só no Render, a
+    # partir de backend/Dockerfile, sem Nginx/Compose/API gateway adicional
+    # (ver comentário no Dockerfile e em SECURE_PROXY_SSL_HEADER abaixo,
+    # que já descreve "Render... termina TLS num proxy" — um só). Nenhuma
+    # menção, em nenhum doc do projeto, de Cloudflare (ou qualquer CDN/WAF)
+    # na frente do domínio do backend — as únicas referências a Cloudflare
+    # são sobre R2 (armazenamento de objetos), um produto sem relação com
+    # roteamento HTTP das requisições. O frontend (Vercel, ver comentário
+    # de CORS logo abaixo) chama o backend via CORS entre origens
+    # diferentes — não é um proxy no caminho da requisição ao Django.
+    # Exatamente 1 proxy confiável entre o cliente real e este processo:
+    # o load balancer/edge do próprio Render.
+    #
+    # NUM_PROXIES=1 faz o DRF usar o ÚLTIMO endereço da lista em
+    # X-Forwarded-For (o único que um proxy confiável — nunca o cliente —
+    # pode ter anexado), descartando qualquer prefixo forjado pelo próprio
+    # cliente. Sem X-Forwarded-For nenhum (ex.: acesso direto em dev local,
+    # sem proxy nenhum na frente), o comportamento não muda: cai em
+    # REMOTE_ADDR, exatamente como antes desta configuração.
+    "NUM_PROXIES": 1,
     # Opt-in per view via `throttle_classes`/`throttle_scope` (see
     # apps.accounts.views) — deliberately not set as DEFAULT_THROTTLE_CLASSES,
     # so the rest of the API stays unthrottled. Only the auth endpoints that

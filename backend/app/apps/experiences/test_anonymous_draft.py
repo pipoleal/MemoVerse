@@ -879,3 +879,47 @@ class AuthenticatedFlowUnchangedTests(TestCase):
             status.HTTP_404_NOT_FOUND,
         )
         self.assertEqual(stranger_client.delete(draft_url(draft_id)).status_code, status.HTTP_404_NOT_FOUND)
+
+
+# ---------------------------------------------------------------------------
+# Auditoria de segurança (Achado #1) — NUM_PROXIES=1 também protege
+# draft_claim, o outro throttle deste app (além de anonymous_draft_create)
+# afetado pelo bypass via X-Forwarded-For. Mesma configuração global de
+# config/settings.py — ver apps.accounts.tests.RateLimitProxyIdentificationTests
+# para os testes equivalentes em login/register.
+# ---------------------------------------------------------------------------
+
+
+class DraftClaimThrottleProxyIdentificationTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = make_user()
+        self.client = auth_client(self.user)
+
+    def test_varying_the_forwarded_for_prefix_no_longer_bypasses_the_draft_claim_throttle(self):
+        # DEFAULT_THROTTLE_RATES["draft_claim"] = "20/hour". claim_token
+        # errado de propósito em toda tentativa — só nos interessa o
+        # status 429 (throttle), nunca o 404 do claim em si.
+        real_client_ip = "203.0.113.9"
+        draft_id, _token = create_anonymous_draft()
+
+        for attempt in range(20):
+            response = self.client.post(
+                claim_url(draft_id),
+                {"claim_token": "wrong-token"},
+                format="json",
+                HTTP_X_FORWARDED_FOR=f"10.0.0.{attempt},{real_client_ip}",
+            )
+            self.assertNotEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        response = self.client.post(
+            claim_url(draft_id),
+            {"claim_token": "wrong-token"},
+            format="json",
+            HTTP_X_FORWARDED_FOR=f"10.0.0.99,{real_client_ip}",
+        )
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Variar o prefixo de X-Forwarded-For não deve mais escapar do rate limit de draft_claim.",
+        )
