@@ -52,9 +52,17 @@ type ExperienceViewerProps = {
   // PublicExperienceView.tsx) always passes this explicitly, since a
   // visitor there may or may not be the owner.
   isOwner?: boolean;
+  // Etapa Minha Galáxia (destinatário): o slug público desta experiência —
+  // só o suficiente para GalaxyChapter chamar "Criar minha Galáxia"
+  // (POST /experiences/public/<slug>/save/), nunca guardado em
+  // Experience/toExperience (aquele tipo descreve a experiência em si, não
+  // sua identidade pública). undefined no modo wizard/checkout (sem
+  // `experience` prop) — lá o botão nunca é mostrado de qualquer forma,
+  // porque isOwner já é true por padrão nesse modo.
+  slug?: string;
 };
 
-export default function ExperienceViewer({ experience: experienceProp, onCompleted, isOwner = true }: ExperienceViewerProps) {
+export default function ExperienceViewer({ experience: experienceProp, onCompleted, isOwner = true, slug }: ExperienceViewerProps) {
   // useOptionalExperience (not useExperience) never throws when there is no
   // Provider — required so the prop-driven mode above can mount without one.
   const context = useOptionalExperience();
@@ -267,7 +275,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
             exit={{ opacity: 0 }}
             transition={CHAPTER_TRANSITION}
           >
-            <GalaxyChapter onRevive={handleRevive} isOwner={isOwner} />
+            <GalaxyChapter onRevive={handleRevive} isOwner={isOwner} slug={slug} />
           </motion.div>
         )}
       </AnimatePresence>

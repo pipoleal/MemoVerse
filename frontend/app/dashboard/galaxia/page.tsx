@@ -2,10 +2,10 @@
 
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import GalaxyHub from "@/components/dashboard/GalaxyHub";
-import { useDashboardData } from "@/components/dashboard/useDashboardData";
+import { useGalaxyData } from "@/components/dashboard/useGalaxyData";
 
 export default function GalaxyPage() {
-  const { drafts, loading, error } = useDashboardData();
+  const { drafts, loading, error } = useGalaxyData();
 
   return (
     <DashboardShell>

@@ -8,6 +8,8 @@ from .views import (
     MediaDeleteView,
     MediaUploadCompleteView,
     MediaUploadIntentView,
+    ReceivedExperiencesListView,
+    SaveExperienceToGalaxyView,
     ThemeListView,
 )
 
@@ -21,4 +23,11 @@ urlpatterns = [
     path("drafts/<uuid:draft_id>/media/upload-intents/", MediaUploadIntentView.as_view(), name="media-upload-intent"),
     path("drafts/<uuid:draft_id>/media/<uuid:media_id>/complete/", MediaUploadCompleteView.as_view(), name="media-upload-complete"),
     path("drafts/<uuid:draft_id>/media/<uuid:media_id>/", MediaDeleteView.as_view(), name="media-delete"),
+    # Etapa Minha Galáxia (destinatário): namespace "public/" de propósito,
+    # espelhando api/public/experiences/<slug>/ em config/urls.py — deixa
+    # explícito, só pela URL, que este endpoint resolve por slug público
+    # (nunca por draft_id privado), mesmo que ele exija autenticação para
+    # gravar a associação.
+    path("public/<slug:slug>/save/", SaveExperienceToGalaxyView.as_view(), name="experience-save-to-galaxy"),
+    path("received/", ReceivedExperiencesListView.as_view(), name="received-list"),
 ]

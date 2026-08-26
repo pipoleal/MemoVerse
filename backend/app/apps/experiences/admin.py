@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ExperienceDraft, Media, Theme
+from .models import ExperienceDraft, ExperienceRecipient, Media, Theme
 
 
 class ReadOnlyAdminMixin:
@@ -49,3 +49,10 @@ class ThemeAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_filter = ("is_active",)
     search_fields = ("code", "name")
     ordering = ("sort_order", "code")
+
+
+@admin.register(ExperienceRecipient)
+class ExperienceRecipientAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    list_display = ("id", "user", "draft", "received_at")
+    search_fields = ("user__email", "draft__id", "draft__slug", "draft__title")
+    ordering = ("-received_at",)

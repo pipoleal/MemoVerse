@@ -19,9 +19,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from .models import ExperienceDraft, Media, Theme
+from .models import ExperienceDraft, ExperienceRecipient, Media, Theme
 from .serializers import (
     ExperienceDraftSerializer,
+    GalaxySaveResponseSerializer,
     MediaCaptionUpdateSerializer,
     PublicExperienceSerializer,
     PublishResponseSerializer,
@@ -285,6 +286,73 @@ class PublicExperienceView(APIView):
             ),
         }
         return Response(PublicExperienceSerializer(response_data).data)
+
+
+class SaveExperienceToGalaxyView(APIView):
+    """POST /api/experiences/public/<slug:slug>/save/
+
+    Guarda, para request.user, uma referência à experiência pública `slug`
+    na própria Galáxia — NUNCA transfere propriedade (ver
+    models.ExperienceRecipient; draft.owner nunca é alterado aqui).
+
+    O draft é resolvido pela MESMA query de PublicExperienceView (slug +
+    status=PUBLISHED + não expirado), nunca por um id vindo do cliente —
+    não existe caminho para associar um draft privado, ainda não publicado
+    ou expirado: ele simplesmente não é encontrado (404), o mesmo 404
+    genérico de "não existe" que PublicExperienceView já devolve para os
+    três casos, sem distingui-los.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, slug):
+        draft = get_object_or_404(
+            ExperienceDraft.objects.filter(Q(expires_at__isnull=True) | Q(expires_at__gte=timezone.now())),
+            slug=slug,
+            status=ExperienceDraft.Status.PUBLISHED,
+        )
+
+        if draft.owner_id == request.user.id:
+            # O próprio criador "salvando" a própria experiência: ela já
+            # está na Galáxia dele por ser dono — no-op idempotente, nunca
+            # cria um ExperienceRecipient de si mesmo (evita uma segunda
+            # estrela duplicada quando GET /experiences/received/ e GET
+            # /experiences/drafts/ forem combinados no frontend).
+            logger.info("experience.save_to_galaxy.owner_noop")
+            return Response(GalaxySaveResponseSerializer({"id": draft.id, "slug": draft.slug}).data)
+
+        # get_or_create já é seguro contra a corrida de duplo clique/dupla
+        # aba (a UniqueConstraint do banco é quem decide de verdade) — o
+        # atomic aqui só mantém o mesmo estilo do resto do app (ex.:
+        # DraftClaimView), não é estritamente necessário para a segurança.
+        with transaction.atomic():
+            ExperienceRecipient.objects.get_or_create(user=request.user, draft=draft)
+
+        logger.info("experience.save_to_galaxy.success")
+        return Response(GalaxySaveResponseSerializer({"id": draft.id, "slug": draft.slug}).data)
+
+
+class ReceivedExperiencesListView(APIView):
+    """GET /api/experiences/received/
+
+    Experiências que request.user recebeu (guardou na própria Galáxia via
+    "Criar minha Galáxia") — nunca inclui as que ele possui como dono, essa
+    lista já é GET /experiences/drafts/. Mesmo ExperienceDraftSerializer:
+    o frontend já sabe consumir esse shape, e a posição da estrela em
+    lib/galaxyStars.ts é semeada por draft.id — devolver o MESMO id da
+    ExperienceDraft original é o que garante posição determinística sem
+    nenhuma mudança no sistema de estrelas.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        drafts = (
+            ExperienceDraft.objects.filter(recipients__user=request.user)
+            .prefetch_related("media")
+            .order_by("-recipients__received_at")
+        )
+        return Response(ExperienceDraftSerializer(drafts, many=True).data)
 
 
 class MediaUploadIntentView(APIView):

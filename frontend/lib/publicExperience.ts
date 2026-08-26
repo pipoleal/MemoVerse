@@ -49,6 +49,22 @@ export function isNotFoundError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;
 }
 
+// POST /api/experiences/public/<slug>/save/ — "Criar minha Galáxia" (ver
+// GalaxyChapter.tsx). Requires auth (the interceptor in lib/api.ts already
+// attaches it); never sends anything beyond the slug already in the URL —
+// the backend resolves the draft itself, the same way
+// fetchPublicExperience above does, so this never accepts an id chosen by
+// the caller.
+export type GalaxySaveResponse = {
+  id: string;
+  slug: string;
+};
+
+export async function saveExperienceToGalaxy(slug: string): Promise<GalaxySaveResponse> {
+  const response = await api.post<GalaxySaveResponse>(`/experiences/public/${slug}/save/`);
+  return response.data;
+}
+
 // Explicit field-by-field mapping onto the existing Experience type — no
 // second/parallel type is created. Only renamed/reshaped where the public
 // API and the wizard's Experience genuinely disagree (snake_case API field

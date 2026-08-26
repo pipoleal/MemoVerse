@@ -8,6 +8,8 @@ import { api } from "@/lib/api";
 import { login } from "@/lib/auth";
 import { clearAnonymousDraft, getAnonymousDraft } from "@/lib/anonymousDraft";
 import { clearPendingExperience, hasPendingExperience, savePendingExperienceDraft } from "@/lib/pendingExperience";
+import { clearPendingGalaxySave, getPendingGalaxySave } from "@/lib/pendingGalaxySave";
+import { saveExperienceToGalaxy } from "@/lib/publicExperience";
 
 import Button from "../ui/Button";
 import Input from "./Input";
@@ -66,6 +68,29 @@ export default function LoginForm() {
       if (hasPendingExperience()) {
         await savePendingExperienceDraft();
         clearPendingExperience();
+      }
+
+      // Etapa Minha Galáxia (destinatário): "Criar minha Galáxia" salvou o
+      // slug aqui antes de mandar para /login (ver GalaxyChapter.tsx) —
+      // best-effort de propósito, mesmo padrão do claim acima: login já
+      // concluído com sucesso, uma falha aqui (slug expirado nesse meio
+      // tempo, rede) nunca deve travar o usuário sem saída.
+      const pendingGalaxySave = getPendingGalaxySave();
+      let galaxySaved = false;
+      if (pendingGalaxySave) {
+        try {
+          await saveExperienceToGalaxy(pendingGalaxySave.slug);
+          galaxySaved = true;
+        } catch {
+          // ignorado de propósito — ver comentário acima
+        } finally {
+          clearPendingGalaxySave();
+        }
+      }
+
+      if (galaxySaved) {
+        router.push("/dashboard/galaxia");
+        return;
       }
       router.push(claimedDraftId ? `/checkout/${claimedDraftId}` : "/dashboard");
     } catch (submitError) {

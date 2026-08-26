@@ -149,6 +149,17 @@ class PublicExperienceSerializer(serializers.Serializer):
     viewer_can_manage = serializers.BooleanField()
 
 
+class GalaxySaveResponseSerializer(serializers.Serializer):
+    """Resposta de POST /api/experiences/public/<slug>/save/ — só o
+    suficiente para o frontend confirmar e navegar para a Galáxia. Nunca
+    inclui owner/dados do criador (mesmo padrão de PublishResponseSerializer
+    acima) — quem chama este endpoint nunca aprende nada sobre o Felipe além
+    do que PublicExperienceView já expõe publicamente."""
+
+    id = serializers.UUIDField()
+    slug = serializers.CharField()
+
+
 class UploadIntentSerializer(serializers.Serializer):
     media_type = serializers.ChoiceField(choices=Media.Type.choices)
     filename = serializers.CharField(max_length=255)

@@ -41,6 +41,15 @@ export type Draft = {
   media: DraftMedia[];
   created_at: string;
   updated_at: string;
+  // Etapa Minha Galáxia (destinatário): anotação só do frontend (nunca vem
+  // da API — GET /experiences/drafts/ e GET /experiences/received/ devolvem
+  // exatamente o mesmo ExperienceDraftSerializer, sem esse campo) — marca
+  // se este draft é deste usuário ("owner", de /experiences/drafts/) ou foi
+  // salvo por ele via "Criar minha Galáxia" ("received", de
+  // /experiences/received/). Existe para preservar a distinção
+  // internamente mesmo a Galáxia mostrando as duas listas juntas por
+  // enquanto — ver GalaxyHub.tsx.
+  relation: "owner" | "received";
 };
 
 export type DashboardData = {
@@ -53,6 +62,12 @@ export type DashboardData = {
 // page and shared (via props) by JourneyStats and ExperienceSection —
 // replaces the old ExperienceList.tsx + Stats.tsx pattern, where each
 // component fetched the exact same endpoint independently.
+//
+// Deliberately owner-only (never merges in received experiences — see
+// useGalaxyData for that): JourneyStats' counters ("total", "publicadas",
+// "próximo evento") describe the user's OWN creative journey, so an
+// experience they merely received (via "Criar minha Galáxia") must never
+// inflate them.
 export function useDashboardData(): DashboardData {
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [error, setError] = useState(false);
@@ -61,9 +76,9 @@ export function useDashboardData(): DashboardData {
     let cancelled = false;
 
     api
-      .get<Draft[]>("/experiences/drafts/")
+      .get<Omit<Draft, "relation">[]>("/experiences/drafts/")
       .then((response) => {
-        if (!cancelled) setDrafts(response.data);
+        if (!cancelled) setDrafts(response.data.map((draft) => ({ ...draft, relation: "owner" as const })));
       })
       .catch(() => {
         if (!cancelled) setError(true);

@@ -123,6 +123,43 @@ class ExperienceDraft(models.Model):
         ordering = ["-updated_at"]
 
 
+class ExperienceRecipient(models.Model):
+    """Marca que `user` guardou a experiência pública `draft` na própria
+    Galáxia — NUNCA transfere propriedade (draft.owner nunca muda aqui).
+
+    Deliberadamente uma relação intermediária enxuta (sem duplicar
+    ExperienceDraft/Media/etc.): a "estrela" do destinatário na Galáxia é a
+    mesma linha de ExperienceDraft do criador, só referenciada por mais um
+    usuário. on_delete=CASCADE nos dois lados é seguro porque um
+    ExperienceDraft PUBLISHED nunca é deletável (ver
+    services.draft_deletion.DraftDeletionService — só aceita status=DRAFT
+    sem slug), então na prática o CASCADE em `draft` nunca dispara; existe
+    só como a mesma rede de segurança que Media.draft já usa.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_experiences",
+    )
+    draft = models.ForeignKey(
+        ExperienceDraft,
+        on_delete=models.CASCADE,
+        related_name="recipients",
+    )
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "experience_recipients"
+        ordering = ["-received_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "draft"], name="uniq_user_draft_recipient"),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} <- {self.draft_id}"
+
+
 class Media(models.Model):
     """Metadata for a private media object stored in Cloudflare R2."""
 
