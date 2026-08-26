@@ -177,12 +177,34 @@ STORAGES = {
 
 
 # Email
+#
+# MAILERS (chave que existia aqui antes) nunca foi uma configuração real do
+# Django — o Django lê EMAIL_BACKEND (string, nível raiz), não um dict
+# chamado MAILERS; nenhum outro lugar do código a lia. Substituída pela
+# configuração real abaixo.
+#
+# Sem RESEND_API_KEY (dev local e sempre durante `manage.py test`, onde a
+# variável nunca é setada): EMAIL_BACKEND fica no console (imprime no
+# terminal, nunca envia de verdade) — Django troca sozinho para
+# locmem.EmailBackend durante os testes automatizados, populando
+# django.core.mail.outbox. Ver apps.accounts.services.email_service, que é
+# quem decide se chama o SDK do Resend (com RESEND_API_KEY) ou send_mail
+# (sem ela) — EMAIL_BACKEND só é de fato usado no segundo caso.
+EMAIL_BACKEND = config(
+    "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)
 
-MAILERS = {
-    "default": {
-        "BACKEND": "django.core.mail.backends.console.EmailBackend",
-    },
-}
+# onboarding@resend.dev é o remetente de teste que a própria Resend
+# disponibiliza sem precisar verificar um domínio — só até
+# memoverse.com.br estar verificado lá (ver auditoria do fluxo de
+# recuperação de senha); nunca assumir isso como remetente definitivo.
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="onboarding@resend.dev")
+
+# Vazio por padrão — nunca commitado, nunca hardcoded. Ausente, o app
+# continua funcionando (cai no EMAIL_BACKEND acima); só apps.accounts.
+# services.email_service consulta esta variável, e só para decidir se
+# chama o SDK do Resend.
+RESEND_API_KEY = config("RESEND_API_KEY", default="")
 
 
 AUTH_USER_MODEL = "accounts.User"
@@ -247,6 +269,15 @@ REST_FRAMEWORK = {
         # entropia já tornem isso inviável na prática; ver DraftClaimView).
         "anonymous_draft_create": "20/hour",
         "draft_claim": "20/hour",
+        # Recuperação de senha: separado em dois scopes porque são
+        # superfícies de ataque diferentes. request/ só dispara envio de
+        # e-mail (custo de spam/enumeração-por-volume, não de adivinhação —
+        # a resposta já é sempre genérica); verify/ e confirm/ aceitam um
+        # código de 6 dígitos, então o limite aqui é a segunda camada de
+        # defesa contra força bruta além do limite de tentativas por
+        # código (ver apps.accounts.models.MAX_PASSWORD_RESET_ATTEMPTS).
+        "password_reset_request": "5/hour",
+        "password_reset_verify": "10/hour",
     },
 }
 

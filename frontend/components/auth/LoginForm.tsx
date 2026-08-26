@@ -1,6 +1,7 @@
 "use client";
 
 import axios from "axios";
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -105,9 +106,12 @@ export default function LoginForm() {
       <Input label="E-mail" type="email" name="email" placeholder="Digite seu e-mail" value={email} onChange={(event) => setEmail(event.target.value)} required />
       <PasswordInput label="Senha" name="password" placeholder="Digite sua senha" value={password} onChange={(event) => setPassword(event.target.value)} required />
       <div className="flex justify-end">
-        <span className="text-sm text-white/40" title="Recuperação de senha ainda não está disponível">
-          Esqueceu sua senha? Em breve.
-        </span>
+        <Link
+          href="/forgot-password"
+          className="text-sm text-slate-300 underline-offset-4 transition hover:text-yellow-300 hover:underline"
+        >
+          Esqueceu sua senha?
+        </Link>
       </div>
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       <Button type="submit" className="w-full disabled:cursor-not-allowed disabled:opacity-80" disabled={loading}>

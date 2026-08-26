@@ -27,3 +27,8 @@ boto3
 # Official Mercado Pago SDK, used exclusively by MercadoPagoClient
 # (apps/payments/services/mercadopago_client.py) to talk to the Orders API.
 mercadopago
+
+# Official Resend SDK, used exclusively by apps/accounts/services/email_service.py
+# to send password-reset codes. Only imported/called when RESEND_API_KEY is
+# set — dev and tests use Django's own console/locmem email backend instead.
+resend
