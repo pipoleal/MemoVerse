@@ -12,18 +12,13 @@ export default function HeroActions() {
   return (
     <FadeIn delay={0.2}>
       <div className="grid gap-6 md:grid-cols-3">
-        {/* Minha Galáxia: no route exists yet — prepared visually, never a
-            fake navigation. Same "Em breve" contract as the Sidebar item. */}
-        <div
-          className="flex flex-col rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-xl"
-          title="Em breve"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-4xl">🌌</span>
-            <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold tracking-wide text-slate-300">
-              EM BREVE
-            </span>
-          </div>
+        {/* Minha Galáxia: /dashboard/galaxia já existe (mesma rota que a
+            Sidebar usa — ver SidebarLink em Sidebar.tsx) — este card só
+            navega até ela, mesmo padrão do card "Criar Experiência" abaixo.
+            Não confundir com PremiumGalaxyCard ("Galáxia Viva"), uma
+            funcionalidade separada que ainda não tem rota própria. */}
+        <div className="flex flex-col rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-white/20">
+          <span className="text-4xl">🌌</span>
 
           <h3 className="mt-6 text-2xl font-bold text-white">Minha Galáxia</h3>
 
@@ -33,8 +28,8 @@ export default function HeroActions() {
 
           <Button
             variant="secondary"
-            disabled
-            className="mt-6 w-full cursor-not-allowed py-3 text-sm opacity-40 hover:scale-100 hover:-translate-y-0 hover:bg-transparent hover:text-white"
+            className="mt-6 w-full py-3 text-sm"
+            onClick={() => router.push("/dashboard/galaxia")}
           >
             Explorar galáxia
           </Button>

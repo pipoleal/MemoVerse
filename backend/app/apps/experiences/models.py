@@ -122,6 +122,43 @@ class ExperienceDraft(models.Model):
         db_table = "experience_drafts"
         ordering = ["-updated_at"]
 
+    def get_galaxy_live_enabled(self) -> bool:
+        """Etapa Galáxia Viva: benefício da experiência paga (via
+        Payment.plan.get_feature("galaxy_live_enabled")), NUNCA da conta —
+        mesmo dono pode ter uma experiência comum e outra Galáxia Viva ao
+        mesmo tempo (ver apps.payments.tests.test_models.
+        GalaxyLiveEntitlementTests). Mesma resolução de "pagamento aprovado
+        deste draft" já usada em
+        services.publication_service._compute_expires_at — nunca duplicada
+        como uma segunda query solta, só reaproveitada aqui.
+
+        Lê de `approved_payments_list` quando a queryset já veio com esse
+        prefetch (ver views.py: DraftListCreateView.get/
+        ReceivedExperiencesListView.get — evita N+1 numa lista); sem esse
+        prefetch (ex.: resposta de criar/editar um draft único), cai numa
+        query avulsa — nunca quebra, só custa 1 query a mais nesse caso.
+        """
+        # Import tardio: mesmo motivo do import tardio em
+        # publication_service._compute_expires_at — apps.experiences
+        # importar apps.payments no nível do módulo (aqui, models.py)
+        # inverteria a ordem de carregamento dos apps.
+        from apps.payments.models import Payment
+
+        prefetched = getattr(self, "approved_payments_list", None)
+        if prefetched is not None:
+            approved_payment = prefetched[0] if prefetched else None
+        else:
+            approved_payment = (
+                Payment.objects.filter(draft=self, status=Payment.Status.APPROVED)
+                .select_related("plan")
+                .order_by("-created_at")
+                .first()
+            )
+
+        if approved_payment is None:
+            return False
+        return bool(approved_payment.plan.get_feature("galaxy_live_enabled"))
+
 
 class ExperienceRecipient(models.Model):
     """Marca que `user` guardou a experiência pública `draft` na própria

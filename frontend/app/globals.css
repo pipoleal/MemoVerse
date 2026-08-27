@@ -76,3 +76,20 @@ body {
     filter: none;
   }
 }
+
+/* components/universe/GalaxiaViva.tsx — ponto pulsante ao lado do relógio
+   ao vivo. Prefixo gv- evita colidir com qualquer keyframes existente ou
+   futuro; motion-reduce:animate-none (aplicado no próprio elemento) já
+   cobre prefers-reduced-motion, sem precisar de uma segunda regra aqui. */
+@keyframes gv-pulse-dot {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}

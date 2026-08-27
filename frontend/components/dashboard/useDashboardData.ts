@@ -41,6 +41,11 @@ export type Draft = {
   media: DraftMedia[];
   created_at: string;
   updated_at: string;
+  // Etapa Galáxia Viva: vem de verdade da API agora (ExperienceDraftSerializer
+  // — ver apps.experiences.models.ExperienceDraft.get_galaxy_live_enabled).
+  // Benefício da experiência paga, nunca da conta — dois drafts do mesmo
+  // dono podem ter valores diferentes aqui.
+  galaxy_live_enabled: boolean;
   // Etapa Minha Galáxia (destinatário): anotação só do frontend (nunca vem
   // da API — GET /experiences/drafts/ e GET /experiences/received/ devolvem
   // exatamente o mesmo ExperienceDraftSerializer, sem esse campo) — marca

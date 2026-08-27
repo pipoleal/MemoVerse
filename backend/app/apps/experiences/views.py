@@ -91,6 +91,30 @@ class ThemeListView(APIView):
         return Response(ThemeSerializer(themes, many=True).data)
 
 
+def _approved_payments_prefetch() -> Prefetch:
+    """Etapa Galáxia Viva: usado pelas duas listas de draft (dono e
+    recebidas) para que ExperienceDraft.get_galaxy_live_enabled() (ver
+    models.py, consumido por ExperienceDraftSerializer) leia de
+    `approved_payments_list` em vez de disparar uma query por draft — sem
+    isto, uma lista de N drafts vira N+1 queries só pra saber o
+    entitlement de cada um.
+
+    Função (não uma constante de módulo) porque `Payment` precisa de
+    import tardio aqui — mesmo motivo já documentado em
+    services.publication_service._compute_expires_at e em
+    ExperienceDraft.get_galaxy_live_enabled: importar apps.payments no
+    nível do módulo de apps.experiences arrisca inverter a ordem de
+    carregamento dos apps.
+    """
+    from apps.payments.models import Payment
+
+    return Prefetch(
+        "payments",
+        queryset=Payment.objects.filter(status=Payment.Status.APPROVED).select_related("plan"),
+        to_attr="approved_payments_list",
+    )
+
+
 class DraftListCreateView(APIView):
     # Etapa 10: GET (listar meus drafts) continua exigindo autenticação de
     # verdade — nunca lista draft anônimo nenhum, de ninguém. POST passa a
@@ -109,7 +133,10 @@ class DraftListCreateView(APIView):
         return []
 
     def get(self, request):
-        drafts = ExperienceDraft.objects.filter(owner=request.user).prefetch_related("media")
+        drafts = (
+            ExperienceDraft.objects.filter(owner=request.user)
+            .prefetch_related("media", _approved_payments_prefetch())
+        )
         return Response(ExperienceDraftSerializer(drafts, many=True).data)
 
     def post(self, request):
@@ -349,7 +376,7 @@ class ReceivedExperiencesListView(APIView):
     def get(self, request):
         drafts = (
             ExperienceDraft.objects.filter(recipients__user=request.user)
-            .prefetch_related("media")
+            .prefetch_related("media", _approved_payments_prefetch())
             .order_by("-recipients__received_at")
         )
         return Response(ExperienceDraftSerializer(drafts, many=True).data)

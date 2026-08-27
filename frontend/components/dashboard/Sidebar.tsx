@@ -24,39 +24,6 @@ function SidebarLink({ href, icon, label, active }: { href: string; icon: string
   );
 }
 
-// Not a link — no route exists yet for "Galáxia Viva" (the separate,
-// premium concept), and the product decision is explicit: preparado
-// visualmente, nunca navegação falsa. "Minha Galáxia" graduated to a real
-// SidebarLink below once /dashboard/galaxia was built. `badgeClassName`
-// lets a prepared item read as visually distinct from an active link.
-function SidebarPreparedItem({
-  icon,
-  label,
-  badge,
-  badgeClassName,
-}: {
-  icon: string;
-  label: string;
-  badge: string;
-  badgeClassName: string;
-}) {
-  return (
-    <div
-      className="flex cursor-not-allowed items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold text-slate-500"
-      title="Em breve"
-    >
-      <span className="flex items-center gap-3">
-        <span className="text-lg opacity-60">{icon}</span>
-        {label}
-      </span>
-
-      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${badgeClassName}`}>
-        {badge}
-      </span>
-    </div>
-  );
-}
-
 export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
 
@@ -96,11 +63,16 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
             active={pathname === "/dashboard/galaxia"}
           />
 
-          <SidebarPreparedItem
+          {/* Etapa Galáxia Viva: graduou pra link real (mesmo caminho que
+              "Minha Galáxia" já tinha percorrido) — /dashboard/galaxia-viva
+              decide sozinha o que mostrar conforme o entitlement
+              (galaxy_live_enabled), nunca uma checagem prévia aqui na
+              Sidebar (ver comentário em GalaxiaVivaView.tsx). */}
+          <SidebarLink
+            href="/dashboard/galaxia-viva"
             icon="✨"
             label="Galáxia Viva"
-            badge="PREMIUM"
-            badgeClassName="bg-yellow-400/15 text-yellow-300"
+            active={pathname === "/dashboard/galaxia-viva"}
           />
 
           <SidebarLink href="/experience/new" icon="➕" label="Criar Experiência" active={pathname === "/experience/new"} />

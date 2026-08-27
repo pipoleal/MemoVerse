@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 
-// Presents the Galáxia Viva concept only — no checkout, no plan check
-// against the backend (User has no premium field today), no navigation.
-// "Conhecer" just expands a short benefits list in place; there is
-// deliberately nothing to click through to yet.
+// Etapa Galáxia Viva: graduou de "só apresenta o conceito, nada clicável"
+// pra navegação real — /dashboard/galaxia-viva já existe e decide sozinha
+// o que mostrar (tela cheia se o usuário tiver ao menos uma experiência
+// com o entitlement galaxy_live_enabled, upsell se não tiver — ver
+// GalaxiaVivaView.tsx). Este card nunca checa o entitlement antes de
+// navegar, mesmo padrão do card "Minha Galáxia" ao lado (HeroActions.tsx):
+// o link de conta é sempre o mesmo, é o destino que decide o conteúdo.
 const BENEFITS = [
   "Uma galáxia viva, com animações e efeitos exclusivos para suas memórias",
   "Destaques visuais especiais para experiências Premium",
@@ -13,7 +16,7 @@ const BENEFITS = [
 ];
 
 export default function PremiumGalaxyCard() {
-  const [expanded, setExpanded] = useState(false);
+  const router = useRouter();
 
   return (
     <div
@@ -34,27 +37,25 @@ export default function PremiumGalaxyCard() {
 
       <h3 className="mt-6 text-2xl font-bold text-white">Galáxia Viva</h3>
 
-      <p className="mt-3 flex-1 text-slate-300">
+      <p className="mt-3 text-slate-300">
         Recursos exclusivos que tornam suas memórias ainda mais incríveis.
       </p>
 
-      {expanded && (
-        <ul className="mt-5 space-y-2 text-sm text-slate-300">
-          {BENEFITS.map((benefit) => (
-            <li key={benefit} className="flex gap-2">
-              <span className="text-yellow-400">✦</span>
-              {benefit}
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="mt-5 flex-1 space-y-2 text-sm text-slate-300">
+        {BENEFITS.map((benefit) => (
+          <li key={benefit} className="flex gap-2">
+            <span className="text-yellow-400">✦</span>
+            {benefit}
+          </li>
+        ))}
+      </ul>
 
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => router.push("/dashboard/galaxia-viva")}
         className="mt-6 w-full cursor-pointer rounded-full border border-yellow-400/40 bg-yellow-400/10 py-3 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-400/20"
       >
-        {expanded ? "Ver menos" : "Conhecer"}
+        Explorar Galáxia Viva
       </button>
     </div>
   );

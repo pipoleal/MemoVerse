@@ -61,6 +61,11 @@ class MediaCaptionUpdateSerializer(serializers.Serializer):
 
 class ExperienceDraftSerializer(serializers.ModelSerializer):
     media = MediaSerializer(many=True, read_only=True)
+    # Etapa Galáxia Viva: ver ExperienceDraft.get_galaxy_live_enabled — nunca
+    # calculado aqui, só exposto. SerializerMethodField (não um campo do
+    # model) porque não é uma coluna, é derivado do Payment aprovado deste
+    # draft a cada leitura.
+    galaxy_live_enabled = serializers.SerializerMethodField()
 
     class Meta:
         model = ExperienceDraft
@@ -68,10 +73,14 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
             "id", "status", "slug", "experience_type", "theme", "title", "recipient_name",
             "creator_name", "event_date", "letter", "short_message", "context_answer",
             "music_provider", "music_url", "media", "created_at", "updated_at",
+            "galaxy_live_enabled",
         )
         # slug is only ever set by PublicationService on first publish (see
         # models.ExperienceDraft.slug) — never client-writable, same as status.
         read_only_fields = ("id", "status", "slug", "media", "created_at", "updated_at")
+
+    def get_galaxy_live_enabled(self, obj: ExperienceDraft) -> bool:
+        return obj.get_galaxy_live_enabled()
 
     def validate_theme(self, value):
         # Só valida quando um valor é de fato enviado — "" continua permitido
