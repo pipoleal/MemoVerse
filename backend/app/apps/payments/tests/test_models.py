@@ -109,11 +109,7 @@ class CommercialPlansSeedTests(TestCase):
     def test_lifetime_galaxy_plan_values(self):
         plan = Plan.objects.get(code="lifetime_galaxy")
         self.assertEqual(plan.name, "MemoVerse Vitalício + Galáxia Viva")
-        # TEMPORÁRIO: preço seedado por 0005 é 39.90, mas
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing reduz para
-        # 0.10 para compra real em produção (QA) — reverter junto com essa
-        # migration.
-        self.assertEqual(plan.price, Decimal("0.10"))
+        self.assertEqual(plan.price, Decimal("39.90"))
         self.assertEqual(plan.currency, "BRL")
         self.assertTrue(plan.is_active)
         self.assertIsNone(plan.get_feature("duration_days"))
