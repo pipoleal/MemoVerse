@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import CardPaymentBlock from "./CardPaymentBlock";
+import ThemeVisual from "@/components/dashboard/ThemeVisual";
 import {
   createOrResumeCheckout,
   extractCheckoutErrorMessage,
@@ -19,6 +19,7 @@ import {
   type Plan,
 } from "@/lib/checkout";
 import { extractPublishErrorMessage, publishDraft } from "@/lib/publish";
+import { fetchPublicExperience } from "@/lib/publicExperience";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -596,32 +597,20 @@ function AwaitingPaymentBlock({
 type PublishPhase =
   | { kind: "idle" }
   | { kind: "publishing" }
-  | { kind: "published"; slug: string }
+  // title/theme são só cosméticos (preview temático + nome na tela de
+  // sucesso) — vêm de uma segunda chamada best-effort depois do publish
+  // (ver handlePublish); ficam "" quando essa chamada falha, e a tela de
+  // sucesso renderiza normalmente sem esses dois detalhes.
+  | { kind: "published"; slug: string; title: string; theme: string }
   | { kind: "error"; message: string };
 
 function ApprovedBlock({ draftId }: { draftId: string }) {
-  const router = useRouter();
   const [publishPhase, setPublishPhase] = useState<PublishPhase>({ kind: "idle" });
-
-  // Etapa Galáxia: publicar não termina mais numa caixa de link com "Abrir
-  // experiência" em nova aba — o criador entra direto, na mesma aba, na
-  // experiência que acabou de publicar (mesma rota pública /e/[slug] que
-  // qualquer destinatário usaria; viewer_can_manage no backend garante que
-  // só ele vê "Conhecer sua galáxia" no fim — ver GalaxyChapter.tsx).
-  // Pequeno atraso só para a mensagem "Experiência publicada!" ser lida
-  // antes da navegação, não uma espera funcional.
-  useEffect(() => {
-    if (publishPhase.kind !== "published") return;
-    const redirectTimer = window.setTimeout(() => {
-      router.push(`/e/${publishPhase.slug}`);
-    }, 1200);
-    return () => window.clearTimeout(redirectTimer);
-  }, [publishPhase, router]);
 
   async function handlePublish() {
     // Guards against a double click firing two requests — once published,
     // this branch is also never reachable again since the button is
-    // replaced by the link block below.
+    // replaced by the success screen below.
     if (publishPhase.kind === "publishing" || publishPhase.kind === "published") return;
 
     setPublishPhase({ kind: "publishing" });
@@ -631,16 +620,44 @@ function ApprovedBlock({ draftId }: { draftId: string }) {
       // straight through from CheckoutView, itself the /checkout/[draftId]
       // route param) — never re-derived or guessed here.
       const result = await publishDraft(draftId);
+
+      // Best-effort: busca título/tema pela mesma rota pública que
+      // qualquer destinatário usaria (GET /public/experiences/<slug>/, já
+      // testada e usada por PublicExperienceView) só para enriquecer a tela
+      // de sucesso — a publicação em si já está feita e confirmada acima,
+      // então uma falha aqui nunca vira um erro de publicação.
+      let title = "";
+      let theme = "";
+      try {
+        const published = await fetchPublicExperience(result.slug);
+        title = published.title;
+        theme = published.theme;
+      } catch {
+        // Preview cosmético apenas — a tela de sucesso abaixo já lida com
+        // title/theme vazios.
+      }
+
       // Any 200 here — first publish or an idempotent republish of an
       // already-published draft — is treated identically as success; the
       // backend guarantees the same slug either way, no special-casing.
-      setPublishPhase({ kind: "published", slug: result.slug });
+      setPublishPhase({ kind: "published", slug: result.slug, title, theme });
     } catch (error) {
       // Publish failing never touches CheckoutView's own phase — the
       // approved-payment state (this component even being rendered) is
       // entirely unaffected by a publish error.
       setPublishPhase({ kind: "error", message: extractPublishErrorMessage(error) });
     }
+  }
+
+  // Tela de sucesso dedicada — substitui inteiramente o cartão "Pagamento
+  // aprovado!" acima dela. Antes disto, publicar redirecionava o CRIADOR
+  // automaticamente para /e/[slug] (router.push após 1.2s, ver histórico de
+  // git) — a mesma rota pública que o DESTINATÁRIO usa, fazendo o criador
+  // "abrir a própria homenagem" como se fosse quem a recebeu. O criador
+  // publicou para outra pessoa; quem deve abrir /e/[slug] é essa pessoa, a
+  // partir do link que o criador compartilhar — nunca automaticamente aqui.
+  if (publishPhase.kind === "published") {
+    return <PublishedSuccessBlock slug={publishPhase.slug} title={publishPhase.title} theme={publishPhase.theme} />;
   }
 
   return (
@@ -683,24 +700,119 @@ function ApprovedBlock({ draftId }: { draftId: string }) {
         </div>
       )}
 
-      {publishPhase.kind === "published" && (
-        <div className="mt-2 flex flex-col items-center gap-3">
-          <p className="text-sm font-semibold text-green-300">✨ Experiência publicada!</p>
-          <div className="flex items-center gap-3 text-sm text-slate-300">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-yellow-400/30 border-t-yellow-400" />
-            Entrando na sua galáxia...
-          </div>
+      <a
+        href="/dashboard"
+        className="mt-2 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
+      >
+        Ir para o Dashboard
+      </a>
+    </div>
+  );
+}
+
+function PublishedSuccessBlock({ slug, title, theme }: { slug: string; title: string; theme: string }) {
+  const [copyFeedback, setCopyFeedback] = useState<"idle" | "copied" | "failed">("idle");
+
+  // Seguro acessar window/navigator direto no corpo do componente (sem
+  // useEffect/guard de SSR): PublishedSuccessBlock só é montado a partir de
+  // um publishPhase.kind === "published", e o estado inicial de
+  // ApprovedBlock é sempre "idle" — esse estado só vira "published" depois
+  // de um clique do usuário + uma chamada assíncrona já resolvida, nunca
+  // durante a passada de SSR/hidratação inicial (mesmo raciocínio já usado
+  // em ExperienceCard.tsx/GalaxyChapter.tsx para navigator.clipboard/
+  // getAccessToken em handlers, aqui só estendido ao corpo do componente
+  // porque a própria montagem já é 100% pós-interação do usuário).
+  const publicUrl = `${window.location.origin}/e/${slug}`;
+  const canShare = typeof navigator.share === "function";
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopyFeedback("copied");
+    } catch {
+      setCopyFeedback("failed");
+    } finally {
+      setTimeout(() => setCopyFeedback("idle"), 2500);
+    }
+  }
+
+  async function shareLink() {
+    try {
+      await navigator.share({
+        title: title || "MemoVerse",
+        text: "Preparei uma experiência especial para você no MemoVerse ✨",
+        url: publicUrl,
+      });
+    } catch {
+      // Usuário cancelou o compartilhamento nativo, ou o navegador recusou
+      // — nunca vira um erro visível; "Copiar link" continua ali do lado
+      // como alternativa sempre disponível.
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-6 rounded-3xl border border-green-400/30 bg-green-400/10 p-8 text-center backdrop-blur-xl sm:p-10">
+      <span className="text-5xl">✨</span>
+
+      <div>
+        <h2 className="text-2xl font-bold text-white">Experiência publicada!</h2>
+        <p className="mt-2 text-slate-300">Sua experiência está pronta para ser compartilhada.</p>
+      </div>
+
+      {theme && (
+        <div className="w-full max-w-xs">
+          <ThemeVisual theme={theme} />
+          {title && <p className="mt-3 text-sm font-semibold text-white">{title}</p>}
         </div>
       )}
 
-      {publishPhase.kind !== "published" && (
+      <div className="w-full text-left">
+        <p className="mb-2 text-center text-sm font-semibold text-slate-300">🔗 Link da experiência</p>
+        <div className="break-all rounded-2xl border border-white/10 bg-black/30 p-4 text-center text-sm text-slate-200">
+          {publicUrl}
+        </div>
+      </div>
+
+      <div className="flex w-full flex-col gap-3 sm:flex-row">
+        <button
+          type="button"
+          onClick={() => void copyLink()}
+          className="flex-1 rounded-full bg-yellow-400 px-6 py-3 font-semibold text-black transition-transform hover:scale-[1.02] active:scale-95"
+        >
+          {copyFeedback === "copied"
+            ? "✓ Link copiado!"
+            : copyFeedback === "failed"
+              ? "Não copiou — selecione o link acima"
+              : "Copiar link"}
+        </button>
+
+        {canShare && (
+          <button
+            type="button"
+            onClick={() => void shareLink()}
+            className="flex-1 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
+          >
+            Compartilhar
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex w-full flex-col gap-3 sm:flex-row">
         <a
           href="/dashboard"
-          className="mt-2 rounded-full border border-white/20 px-6 py-3 font-semibold text-white transition-colors hover:bg-white/10"
+          className="flex-1 rounded-full bg-white/10 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/20"
         >
-          Ir para o Dashboard
+          Voltar para minhas experiências
         </a>
-      )}
+        {/* Ação secundária, nunca automática — o criador decide se quer ver
+            a própria homenagem antes de compartilhar. */}
+        <a
+          href={`/e/${slug}`}
+          className="flex-1 rounded-full border border-white/10 px-6 py-3 text-sm font-semibold text-slate-300 transition-colors hover:bg-white/10"
+        >
+          Visualizar experiência
+        </a>
+      </div>
     </div>
   );
 }
