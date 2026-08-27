@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import FadeIn from "../../animations/FadeIn";
 import { useExperience } from "../context/ExperienceContext";
+import { isValidYouTubeUrl } from "@/lib/youtube";
 import type { MusicProvider } from "../types";
 
 const musicOptions: {
@@ -131,6 +132,12 @@ export default function MusicStep() {
     )
   );
 
+  const [galaxyUrl, setGalaxyUrl] = useState(experience.galaxyLiveMusicUrl ?? "");
+  const [galaxyError, setGalaxyError] = useState("");
+  const [galaxyConfirmed, setGalaxyConfirmed] = useState(
+    Boolean(experience.galaxyLiveMusicUrl)
+  );
+
   function selectProvider(provider: MusicProvider) {
     setSelectedProvider(provider);
     setError("");
@@ -214,6 +221,42 @@ export default function MusicStep() {
     });
 
     setConfirmed(true);
+  }
+
+  function handleGalaxyUrlChange(value: string) {
+    setGalaxyUrl(value);
+    setGalaxyError("");
+    setGalaxyConfirmed(false);
+  }
+
+  function confirmGalaxyMusic() {
+    const cleanUrl = galaxyUrl.trim();
+
+    if (!cleanUrl) {
+      setGalaxyError("Cole o link do YouTube primeiro.");
+      setGalaxyConfirmed(false);
+      return;
+    }
+
+    if (!isValidYouTubeUrl(cleanUrl)) {
+      setGalaxyError(
+        "Esse link não parece ser de um vídeo do YouTube (watch, youtu.be ou shorts)."
+      );
+      setGalaxyConfirmed(false);
+      return;
+    }
+
+    updateExperience({ galaxyLiveMusicUrl: cleanUrl });
+    setGalaxyUrl(cleanUrl);
+    setGalaxyError("");
+    setGalaxyConfirmed(true);
+  }
+
+  function removeGalaxyMusic() {
+    setGalaxyUrl("");
+    setGalaxyError("");
+    updateExperience({ galaxyLiveMusicUrl: "" });
+    setGalaxyConfirmed(false);
   }
 
   return (
@@ -428,6 +471,100 @@ export default function MusicStep() {
             </p>
           </div>
         )}
+
+        {/* GALÁXIA VIVA */}
+        <div className="mt-10 rounded-3xl border border-white/10 bg-white/5 p-7 backdrop-blur-xl">
+          <div className="flex items-start gap-4">
+            <div className="text-3xl">🌌</div>
+
+            <div>
+              <h2 className="text-xl font-bold text-white">
+                Trilha sonora da Galáxia Viva
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-400">
+                Opcional. Um link do YouTube que toca de fundo só na tela da
+                Galáxia Viva, com um botão de play visível — nunca sozinho,
+                nunca na experiência pública.
+              </p>
+            </div>
+          </div>
+
+          <input
+            type="url"
+            value={galaxyUrl}
+            onChange={(event) => handleGalaxyUrlChange(event.target.value)}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="
+              mt-6
+              w-full
+              rounded-2xl
+              border
+              border-white/10
+              bg-black/20
+              px-5
+              py-4
+              text-white
+              outline-none
+              placeholder:text-slate-600
+              transition-all
+              focus:border-yellow-400
+              focus:ring-2
+              focus:ring-yellow-400/20
+            "
+          />
+
+          {galaxyError && (
+            <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">
+              {galaxyError}
+            </div>
+          )}
+
+          {galaxyConfirmed && (
+            <div className="mt-4 rounded-2xl border border-green-400/20 bg-green-400/10 px-4 py-3 text-sm text-green-300">
+              ✓ Música da Galáxia Viva adicionada.
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={confirmGalaxyMusic}
+              className="
+                rounded-full
+                bg-yellow-400
+                px-7
+                py-3
+                font-semibold
+                text-black
+                transition-all
+                hover:scale-105
+                hover:bg-yellow-300
+              "
+            >
+              Confirmar música
+            </button>
+
+            {galaxyConfirmed && (
+              <button
+                type="button"
+                onClick={removeGalaxyMusic}
+                className="
+                  rounded-full
+                  bg-white/10
+                  px-7
+                  py-3
+                  font-semibold
+                  text-white
+                  transition-colors
+                  hover:bg-red-500
+                "
+              >
+                Remover
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* AVISO */}
         <div className="mt-8 rounded-2xl border border-white/10 bg-white/0.03 p-5">

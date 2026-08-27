@@ -17,6 +17,7 @@ export type DraftPayload = {
   context_answer: string;
   music_provider: Experience["music"]["provider"];
   music_url: string;
+  galaxy_live_music_url: string;
 };
 
 let savingDraft: Promise<string> | null = null;
@@ -38,6 +39,7 @@ export function toPayload(experience: Experience): DraftPayload {
     context_answer: experience.contextAnswer,
     music_provider: experience.music.provider,
     music_url: experience.music.url,
+    galaxy_live_music_url: experience.galaxyLiveMusicUrl,
   };
 }
 
@@ -90,6 +92,7 @@ export function fromPayload(payload: DraftPayload): Omit<Experience, "photos" | 
       provider: payload.music_provider,
       url: payload.music_url,
     },
+    galaxyLiveMusicUrl: payload.galaxy_live_music_url,
   };
 }
 

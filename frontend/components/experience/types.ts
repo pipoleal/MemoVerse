@@ -48,6 +48,14 @@ export interface Experience {
 
   music: MusicSelection;
 
+  // Etapa Galáxia Viva: trilha de fundo tocada SÓ em /dashboard/galaxia-viva
+  // (GalaxiaViva.tsx), com botão de play manual — nunca autoplay, nunca a
+  // página pública. Campo próprio, separado de `music` acima (aquele toca
+  // na experiência pública ao iniciar a jornada e aceita YouTube/Spotify/
+  // Apple Music; este é sempre YouTube). "" = sem música, mesmo padrão de
+  // shortMessage/contextAnswer.
+  galaxyLiveMusicUrl: string;
+
   published: boolean;
 }
 
@@ -78,6 +86,8 @@ export const initialExperience: Experience = {
     provider: "none",
     url: "",
   },
+
+  galaxyLiveMusicUrl: "",
 
   published: false,
 };

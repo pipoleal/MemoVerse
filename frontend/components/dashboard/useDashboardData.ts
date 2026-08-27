@@ -38,6 +38,10 @@ export type Draft = {
   context_answer: string;
   music_provider: string;
   music_url: string;
+  // Etapa Galáxia Viva: trilha de fundo só de /dashboard/galaxia-viva (ver
+  // components/universe/GalaxiaViva.tsx) — sempre YouTube, sempre "" quando
+  // não preenchida, nunca undefined (mesmo padrão de music_url acima).
+  galaxy_live_music_url: string;
   media: DraftMedia[];
   created_at: string;
   updated_at: string;

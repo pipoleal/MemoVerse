@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from .models import ExperienceDraft, Media, Theme
 from .storage import generate_presigned_read_url
+from .youtube import extract_youtube_video_id
 
 
 class ThemeSerializer(serializers.Serializer):
@@ -72,8 +73,8 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
         fields = (
             "id", "status", "slug", "experience_type", "theme", "title", "recipient_name",
             "creator_name", "event_date", "letter", "short_message", "context_answer",
-            "music_provider", "music_url", "media", "created_at", "updated_at",
-            "galaxy_live_enabled",
+            "music_provider", "music_url", "galaxy_live_music_url", "media", "created_at",
+            "updated_at", "galaxy_live_enabled",
         )
         # slug is only ever set by PublicationService on first publish (see
         # models.ExperienceDraft.slug) — never client-writable, same as status.
@@ -95,6 +96,19 @@ class ExperienceDraftSerializer(serializers.ModelSerializer):
             return value
         if not Theme.objects.filter(code=value, is_active=True).exists():
             raise serializers.ValidationError("Tema inválido ou indisponível.")
+        return value
+
+    def validate_galaxy_live_music_url(self, value):
+        # Mesmo padrão de validate_theme acima: "" sempre passa (campo
+        # opcional, um draft sem essa etapa preenchida não pode falhar por
+        # causa disso). Só um valor não vazio é checado contra o parser —
+        # nunca confia só na validação do frontend (MusicStep.tsx).
+        if not value:
+            return value
+        if extract_youtube_video_id(value) is None:
+            raise serializers.ValidationError(
+                "Cole um link válido de um vídeo do YouTube (youtube.com/watch, youtu.be ou shorts)."
+            )
         return value
 
 

@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Cormorant_Garamond, Fraunces } from "next/font/google";
+import YouTube from "react-youtube";
+
+import { extractYouTubeVideoId } from "@/lib/youtube";
 
 // Porta de components/universe (ver frontend/CLAUDE.md: sistemas novos de
 // Galáxia vivem aqui, nunca uma segunda implementação em outro lugar) do
@@ -59,6 +62,20 @@ type GalaxiaVivaProps = {
   // experiência) — este componente não tem opinião sobre isso.
   since: Date;
   className?: string;
+  // Etapa Galáxia Viva (música): link de YouTube colado pelo dono na Etapa
+  // 7 do wizard (ExperienceDraft.galaxy_live_music_url) — quem chama
+  // decide de onde vem, mesma filosofia de `since`. Ausente/vazio/inválido
+  // (extractYouTubeVideoId retorna null) nunca é um erro: só não renderiza
+  // o botão de música. NUNCA autoplay — só toca a partir de um clique real
+  // no botão que este componente desenha.
+  musicUrl?: string;
+};
+
+// Mesmo padrão de tipo mínimo de MusicPlayer.tsx/LaunchMusicPlayer.tsx —
+// nunca importa o tipo real de react-youtube, só os métodos de fato usados.
+type MinimalYouTubePlayer = {
+  playVideo: () => void;
+  pauseVideo: () => void;
 };
 
 type Star = {
@@ -162,7 +179,7 @@ function formatarDesde(d: Date): string {
   return `${fmtData.format(d)} às ${fmtHora.format(d)}`;
 }
 
-export default function GalaxiaViva({ since, className = "" }: GalaxiaVivaProps) {
+export default function GalaxiaViva({ since, className = "", musicUrl }: GalaxiaVivaProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
   const diasAtuaisRef = useRef(0);
@@ -171,6 +188,45 @@ export default function GalaxiaViva({ since, className = "" }: GalaxiaVivaProps)
   const [displayDias, setDisplayDias] = useState(0);
   const [relogio, setRelogio] = useState({ horas: 0, min: 0, seg: 0 });
   const [srResumo, setSrResumo] = useState("");
+
+  const musicPlayerRef = useRef<MinimalYouTubePlayer | null>(null);
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  // true quando o próprio player do YouTube reporta erro (embed
+  // desabilitado pelo dono do vídeo, removido, restrito por idade/região,
+  // etc. — ver onError abaixo) — nunca deixa o botão em tela depois disso,
+  // já que clicar nele não faria mais nada.
+  const [musicError, setMusicError] = useState(false);
+
+  const musicVideoId = useMemo(
+    () => (musicUrl ? extractYouTubeVideoId(musicUrl) : null),
+    [musicUrl]
+  );
+
+  // Reinicia o estado do player sempre que o vídeo muda (ex.: o dono troca
+  // de experiência selecionada no ExperiencePicker de GalaxiaVivaView, cada
+  // uma com seu próprio link) — nunca herda "tocando"/"erro" de um vídeo
+  // anterior. Ajustado DURANTE o render (padrão oficial do React para
+  // "resetar estado quando uma prop muda"), não num useEffect — um setState
+  // síncrono no corpo de um efeito encadearia uma re-renderização extra
+  // evitável (react-hooks/set-state-in-effect).
+  const [lastMusicVideoId, setLastMusicVideoId] = useState(musicVideoId);
+  if (musicVideoId !== lastMusicVideoId) {
+    setLastMusicVideoId(musicVideoId);
+    setMusicPlaying(false);
+    setMusicError(false);
+  }
+
+  function toggleMusic() {
+    if (!musicPlayerRef.current) return;
+
+    if (musicPlaying) {
+      musicPlayerRef.current.pauseVideo();
+      setMusicPlaying(false);
+    } else {
+      musicPlayerRef.current.playVideo();
+      setMusicPlaying(true);
+    }
+  }
 
   // Recalcula do zero sempre que `since` muda (ex.: componente reutilizado
   // para outra experiência) — nunca acumula estado de uma instância
@@ -400,6 +456,53 @@ export default function GalaxiaViva({ since, className = "" }: GalaxiaVivaProps)
       }}
     >
       <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0 block h-full w-full" />
+
+      {musicVideoId && !musicError && (
+        <>
+          {/* Player invisível (1x1, controls:0) — mesma técnica de
+              MusicPlayer.tsx/LaunchMusicPlayer.tsx. autoplay SEMPRE 0: só
+              toca a partir de um clique real no botão abaixo, nunca
+              sozinho. loop+playlist=próprio id é o truque documentado da
+              IFrame API para repetir um único vídeo (já usado em
+              LaunchMusicPlayer.tsx). */}
+          <div className="pointer-events-none absolute -left-250 -top-250 h-px w-px overflow-hidden opacity-0">
+            <YouTube
+              videoId={musicVideoId}
+              opts={{
+                width: "1",
+                height: "1",
+                playerVars: {
+                  autoplay: 0,
+                  controls: 0,
+                  playsinline: 1,
+                  rel: 0,
+                  loop: 1,
+                  playlist: musicVideoId,
+                },
+              }}
+              onReady={(event) => {
+                musicPlayerRef.current = event.target;
+              }}
+              onError={() => {
+                // Vídeo com embed desabilitado/removido/restrito — nunca
+                // deixa um botão de play em tela que não faria nada.
+                setMusicError(true);
+                setMusicPlaying(false);
+              }}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={toggleMusic}
+            aria-label={musicPlaying ? "Pausar música" : "Tocar música"}
+            aria-pressed={musicPlaying}
+            className="pointer-events-auto absolute bottom-4 right-4 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/40 text-lg text-white backdrop-blur-xl transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-300"
+          >
+            <span aria-hidden="true">{musicPlaying ? "⏸" : "▶️"}</span>
+          </button>
+        </>
+      )}
 
       <div
         aria-hidden="true"

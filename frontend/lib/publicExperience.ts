@@ -111,6 +111,11 @@ export function toExperience(data: PublicExperienceResponse): Experience {
       provider: data.music.provider as MusicProvider,
       url: data.music.url,
     },
+    // PublicExperienceSerializer never exposes galaxy_live_music_url on
+    // purpose (it's a dashboard-only field, see ExperienceDraftSerializer)
+    // — this page (the public /e/[slug] experience) never plays that
+    // track, so there is no value to map here.
+    galaxyLiveMusicUrl: "",
     // Dead field on Experience today (never read anywhere) but required by
     // the type; true is the only value that is ever literally correct here
     // — this page only ever renders drafts the backend already confirmed

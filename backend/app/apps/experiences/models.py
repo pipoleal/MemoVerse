@@ -115,6 +115,19 @@ class ExperienceDraft(models.Model):
     context_answer = models.TextField(blank=True)
     music_provider = models.CharField(max_length=32, default="none")
     music_url = models.URLField(blank=True)
+    # Etapa Galáxia Viva: trilha de fundo tocada SÓ na tela /dashboard/
+    # galaxia-viva (GalaxiaViva.tsx), com botão de play manual — nunca
+    # autoplay, nunca a página pública /e/[slug]. Deliberadamente um campo
+    # próprio, separado de music_provider/music_url acima (aquele par é
+    # outra feature: toca na experiência PÚBLICA ao iniciar a jornada, pode
+    # ser YouTube/Spotify/Apple Music). Este é sempre YouTube, por isso não
+    # tem um "_provider" irmão. blank=True + default="" explícito (não
+    # deixado para o prompt interativo do makemigrations decidir) — mesmo
+    # padrão de music_url, e garante que a migration roda sem intervenção
+    # manual em qualquer ambiente. Validado só na ESCRITA, ver
+    # ExperienceDraftSerializer.validate_galaxy_live_music_url /
+    # apps.experiences.youtube.extract_youtube_video_id.
+    galaxy_live_music_url = models.URLField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

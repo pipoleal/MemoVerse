@@ -66,7 +66,7 @@ export default function GalaxiaVivaView() {
               )}
 
               <div className="h-[70vh] min-h-[560px] w-full">
-                <GalaxiaViva since={sinceFromEventDate(selected)} />
+                <GalaxiaViva since={sinceFromEventDate(selected)} musicUrl={selected.galaxy_live_music_url || undefined} />
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">

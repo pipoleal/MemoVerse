@@ -20,6 +20,7 @@ from .models import ExperienceDraft, Media, Theme
 from .services.draft_deletion import DraftDeletionService, DraftNotDeletable
 from .services.media_cleanup import cleanup_abandoned_media
 from .services.publication_service import DraftNotPayable, PublicationService
+from .youtube import extract_youtube_video_id
 
 User = get_user_model()
 
@@ -226,6 +227,127 @@ class ExperienceDraftThemeValidationTests(TestCase):
         draft.refresh_from_db()
         self.assertEqual(draft.theme, "stellar")
         self.assertEqual(draft.title, "Novo título")
+
+
+class ExtractYoutubeVideoIdTests(TestCase):
+    """apps.experiences.youtube.extract_youtube_video_id — espelha
+    frontend/lib/youtube.ts; ver ExperienceDraftSerializer.
+    validate_galaxy_live_music_url para onde isso é usado de verdade."""
+
+    def test_accepts_watch_url(self):
+        self.assertEqual(
+            extract_youtube_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ"
+        )
+
+    def test_accepts_watch_url_with_extra_query_params(self):
+        self.assertEqual(
+            extract_youtube_video_id("https://youtube.com/watch?v=dQw4w9WgXcQ&t=30s&list=PL123"),
+            "dQw4w9WgXcQ",
+        )
+
+    def test_accepts_short_youtu_be_url(self):
+        self.assertEqual(extract_youtube_video_id("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ")
+
+    def test_accepts_short_youtu_be_url_with_query_params(self):
+        self.assertEqual(extract_youtube_video_id("https://youtu.be/dQw4w9WgXcQ?t=30"), "dQw4w9WgXcQ")
+
+    def test_accepts_shorts_url(self):
+        self.assertEqual(
+            extract_youtube_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ"
+        )
+
+    def test_accepts_mobile_host(self):
+        self.assertEqual(
+            extract_youtube_video_id("https://m.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ"
+        )
+
+    def test_rejects_empty_string(self):
+        self.assertIsNone(extract_youtube_video_id(""))
+
+    def test_rejects_non_youtube_host(self):
+        self.assertIsNone(extract_youtube_video_id("https://vimeo.com/watch?v=dQw4w9WgXcQ"))
+
+    def test_rejects_youtube_url_without_video_id(self):
+        self.assertIsNone(extract_youtube_video_id("https://www.youtube.com/watch"))
+
+    def test_rejects_channel_url(self):
+        self.assertIsNone(extract_youtube_video_id("https://www.youtube.com/@somechannel"))
+
+    def test_rejects_playlist_only_url(self):
+        self.assertIsNone(extract_youtube_video_id("https://www.youtube.com/playlist?list=PL123"))
+
+    def test_rejects_malformed_url(self):
+        self.assertIsNone(extract_youtube_video_id("not a url"))
+
+
+class GalaxyLiveMusicUrlValidationTests(TestCase):
+    """ExperienceDraftSerializer.validate_galaxy_live_music_url — mesmo
+    formato de teste de ExperienceDraftThemeValidationTests acima."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client = auth_client(self.user)
+
+    def test_creating_draft_with_valid_youtube_url_is_accepted(self):
+        response = self.client.post(
+            DRAFT_LIST_URL, {"galaxy_live_music_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["galaxy_live_music_url"], "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    def test_creating_draft_with_shorts_url_is_accepted(self):
+        response = self.client.post(
+            DRAFT_LIST_URL, {"galaxy_live_music_url": "https://www.youtube.com/shorts/dQw4w9WgXcQ"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_creating_draft_with_empty_galaxy_live_music_url_is_accepted(self):
+        response = self.client.post(DRAFT_LIST_URL, {"galaxy_live_music_url": ""})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["galaxy_live_music_url"], "")
+
+    def test_creating_draft_without_galaxy_live_music_url_field_defaults_to_empty(self):
+        response = self.client.post(DRAFT_LIST_URL, {})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["galaxy_live_music_url"], "")
+
+    def test_creating_draft_with_non_youtube_url_is_rejected(self):
+        response = self.client.post(
+            DRAFT_LIST_URL, {"galaxy_live_music_url": "https://open.spotify.com/track/abc123"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("galaxy_live_music_url", response.data)
+
+    def test_creating_draft_with_malformed_url_is_rejected(self):
+        response = self.client.post(DRAFT_LIST_URL, {"galaxy_live_music_url": "not a url"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patching_draft_to_a_valid_youtube_url_is_accepted(self):
+        draft = make_draft(self.user)
+        response = self.client.patch(
+            draft_detail_url(draft.id),
+            {"galaxy_live_music_url": "https://youtu.be/dQw4w9WgXcQ"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        draft.refresh_from_db()
+        self.assertEqual(draft.galaxy_live_music_url, "https://youtu.be/dQw4w9WgXcQ")
+
+    def test_patching_draft_to_an_invalid_url_is_rejected_and_leaves_it_unchanged(self):
+        draft = make_draft(self.user, galaxy_live_music_url="https://youtu.be/dQw4w9WgXcQ")
+        response = self.client.patch(
+            draft_detail_url(draft.id), {"galaxy_live_music_url": "https://vimeo.com/123"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        draft.refresh_from_db()
+        self.assertEqual(draft.galaxy_live_music_url, "https://youtu.be/dQw4w9WgXcQ")
+
+    def test_existing_draft_without_the_field_reads_as_empty_string(self):
+        # Simula um draft criado antes desta migration ser aplicada — o
+        # default="" explícito no model garante isto sem backfill manual.
+        draft = make_draft(self.user)
+        response = self.client.get(draft_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["galaxy_live_music_url"], "")
 
 
 class PublishOwnershipTests(TestCase):
