@@ -5,8 +5,14 @@ import Image from "next/image";
 import { motion, useScroll, useTransform } from "framer-motion";
 
 import { useInViewport } from "@/lib/useInViewport";
+import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
 
 type PhotoMemoryBeatProps = {
+  // Opcional com fallback pro tema padrão — mesmo padrão de
+  // VideoMemoryBeat.tsx (o outro "beat" de MemoriesCanvas.tsx). Estilo da
+  // legenda (abaixo) vem daqui: nunca uma cor genérica fixa, sempre a
+  // identidade visual do tema escolhido pelo dono da experiência.
+  theme?: ThemeVisual;
   src: string;
   // Fase 2.2: opcional — "" (ou ausente) não reserva nenhum espaço visual,
   // a foto renderiza exatamente como antes desta mudança.
@@ -71,7 +77,13 @@ const DUST = [
   ["84%", "78%", "0.4s", "3.4s"],
 ] as const;
 
-export default function PhotoMemoryBeat({ src, caption, index, total }: PhotoMemoryBeatProps) {
+export default function PhotoMemoryBeat({
+  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
+  src,
+  caption,
+  index,
+  total,
+}: PhotoMemoryBeatProps) {
   const sectionRef = useRef<HTMLDivElement | null>(null);
 
   const { isInView: isNear } = useInViewport<HTMLDivElement>(
@@ -129,7 +141,7 @@ export default function PhotoMemoryBeat({ src, caption, index, total }: PhotoMem
 
       <div className={`relative flex w-full ${justify}`}>
         {isNear && (
-          <div className="flex w-full max-w-xl flex-col gap-4">
+          <div className="flex w-full max-w-xl flex-col items-center gap-8">
             <motion.div
               initial={{ opacity: 0, scale: 0.94, filter: "blur(6px)" }}
               whileInView={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
@@ -163,17 +175,26 @@ export default function PhotoMemoryBeat({ src, caption, index, total }: PhotoMem
             {/* Fase 2.2: legenda individual — nunca sobreposta à foto (é uma
                 irmã abaixo, não um overlay), e nunca uma legenda genérica de
                 galeria: pertence só a esta foto. Sem texto, nenhum espaço
-                extra é reservado. */}
+                extra é reservado.
+                Cartão com a mesma linguagem do tema escolhido (ornamentClass/
+                textClass, os mesmos tokens que LetterChapter já usa) — nunca
+                mais um texto solto colado embaixo da foto, sem contraste com
+                o fundo. gap-6 acima (era gap-4) dá o respiro entre foto e
+                legenda que faltava. */}
             {caption && (
-              <motion.p
+              <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, amount: 0.4 }}
                 transition={{ duration: 0.8, delay: 0.25, ease: "easeOut" }}
-                className="wrap-anywhere text-sm font-light italic leading-relaxed text-white/75 sm:text-base"
+                className={`w-fit max-w-[85%] rounded-2xl border px-6 py-4 text-center backdrop-blur-sm ${theme.letter.ornamentClass}`}
               >
-                {caption}
-              </motion.p>
+                <p
+                  className={`wrap-anywhere text-sm italic leading-relaxed sm:text-base ${theme.letter.textClass}`}
+                >
+                  {caption}
+                </p>
+              </motion.div>
             )}
           </div>
         )}

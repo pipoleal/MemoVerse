@@ -64,6 +64,7 @@ export default function MemoriesCanvas({
       {photos.map((photo, index) => (
         <PhotoMemoryBeat
           key={`photo-${index}`}
+          theme={theme}
           src={photo.url}
           caption={photo.caption}
           index={index}
