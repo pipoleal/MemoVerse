@@ -158,18 +158,23 @@ function gerarEstrela(index: number): Star {
     y: 0.1 + r() * 0.76,
     r: size,
     baseAlpha: 0.6 + r() * 0.4,
-    speed: 0.4 + r() * 0.9,
+    // Piscar mais perceptível/frequente (pedido explícito) — período de
+    // ~2 a ~5s por estrela (era ~5-16s), cada uma no seu próprio ritmo
+    // (nunca sincronizado entre estrelas, ao contrário do <Stars> de
+    // fundo da Minha Galáxia — lá TODAS pulsam com o mesmo sin(time),
+    // aqui cada uma com sua própria fase, mais orgânico).
+    speed: 1.2 + r() * 2.0,
     phase: r() * Math.PI * 2,
     color,
     bornAt: null, // preenchido no momento em que a estrela entra em cena
     appearDelay: 0,
-    // Raio pequeno (poucos px) — vagar visível mas sempre contido perto da
-    // origem, nunca atravessando a tela. Velocidades baixas e diferentes
-    // entre si (nunca a mesma) para o movimento parecer lento e orgânico,
-    // nunca um giro mecânico.
-    wanderRadius: 3 + r() * 9,
-    wanderSpeedX: 0.05 + r() * 0.09,
-    wanderSpeedY: 0.05 + r() * 0.09,
+    // Vagar mais perceptível (pedido explícito) — raio e velocidade
+    // maiores que antes, ainda contido perto da origem, nunca atravessando
+    // a tela. Velocidades diferentes entre si (nunca a mesma) para o
+    // movimento parecer orgânico, nunca um giro mecânico.
+    wanderRadius: 4 + r() * 14,
+    wanderSpeedX: 0.08 + r() * 0.16,
+    wanderSpeedY: 0.08 + r() * 0.16,
     wanderPhaseX: r() * Math.PI * 2,
     wanderPhaseY: r() * Math.PI * 2,
   };
@@ -412,7 +417,13 @@ export default function GalaxiaViva({ since, className = "", musicUrl, onSaveMus
         // fixos por estrela de gerarEstrela). appearP (acima) só controla
         // o fade-in do nascimento; depois de ~0.7s ele fica em 1 e para de
         // interferir aqui.
-        const twinkle = reduceMotion ? 1 : 0.68 + 0.32 * Math.sin(t * s.speed + s.phase);
+        // Piscar mais forte (pedido explícito): antes só a opacidade
+        // variava (0.36-1.0) e o tamanho ficava praticamente fixo — agora
+        // as duas coisas pulsam juntas (quase apaga e volta a brilhar),
+        // cada estrela na sua própria fase/ritmo (s.speed/s.phase, fixos
+        // por estrela em gerarEstrela — nunca sincronizado entre elas).
+        const twinkle = reduceMotion ? 1 : 0.15 + 0.85 * (0.5 + 0.5 * Math.sin(t * s.speed + s.phase));
+        const sizePulse = reduceMotion ? 1 : 0.55 + 0.45 * Math.sin(t * s.speed * 0.85 + s.phase + 0.6);
         const pulse = isNewest && !reduceMotion ? 0.9 + 0.1 * Math.sin(t * 1.7) : 1;
         const alpha = s.baseAlpha * twinkle * appearP * pulse;
 
@@ -426,7 +437,7 @@ export default function GalaxiaViva({ since, className = "", musicUrl, onSaveMus
         const depth = s.r / 3.3;
         const px = s.x * W + (parX + driftX) * depth + wanderX;
         const py = s.y * H + (parY + driftY) * depth + wanderY;
-        const radius = Math.max(0.35, s.r * pulse);
+        const radius = Math.max(0.3, s.r * sizePulse * pulse);
 
         // Um único círculo preenchido + shadowBlur — nunca um halo grande
         // em radialGradient nem faísca em cruz: é isso que mantém a
