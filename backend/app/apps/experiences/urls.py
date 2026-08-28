@@ -5,6 +5,7 @@ from .views import (
     DraftDetailView,
     DraftListCreateView,
     DraftPublishView,
+    GalaxyIntroVideoView,
     MediaDeleteView,
     MediaUploadCompleteView,
     MediaUploadIntentView,
@@ -16,6 +17,7 @@ from .views import (
 
 urlpatterns = [
     path("themes/", ThemeListView.as_view(), name="theme-list"),
+    path("galaxy-intro-video/", GalaxyIntroVideoView.as_view(), name="galaxy-intro-video"),
     path("drafts/", DraftListCreateView.as_view(), name="draft-list-create"),
     path("drafts/<uuid:draft_id>/", DraftDetailView.as_view(), name="draft-detail"),
     path("drafts/<uuid:draft_id>/publish/", DraftPublishView.as_view(), name="draft-publish"),

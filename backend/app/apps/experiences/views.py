@@ -91,6 +91,45 @@ class ThemeListView(APIView):
         return Response(ThemeSerializer(themes, many=True).data)
 
 
+# Etapa Galáxia Viva (intro em vídeo): chave fixa, única — não é mídia de
+# nenhum draft (não vem de Media/upload), é um asset decorativo único
+# hospedado no mesmo bucket R2 de produção, só que fora da árvore
+# drafts/<id>/... que o resto deste arquivo usa. "galaxia.mp4/galaxia.mp4"
+# é a chave real como o arquivo foi enviado ao bucket (confirmado no
+# painel do R2, não adivinhado).
+GALAXY_INTRO_VIDEO_STORAGE_KEY = "galaxia.mp4/galaxia.mp4"
+
+
+class GalaxyIntroVideoView(APIView):
+    """GET /api/experiences/galaxy-intro-video/
+
+    Devolve uma URL de leitura temporária (mesma
+    generate_presigned_read_url que MediaSerializer/PublicExperienceView já
+    usam) para o vídeo de introdução da Galáxia Viva — nunca expõe
+    credencial nem nome do bucket, só a URL assinada com expiração.
+
+    AllowAny (mesmo padrão de ThemeListView): o vídeo em si não é dado
+    sensível nem específico de usuário — é decoração da tela /dashboard/
+    galaxia-viva, que já é uma rota autenticada no frontend; expor o link
+    temporário aqui não abre acesso a nada que a UI não já revelaria.
+
+    404 (não 500) quando R2 não está configurado (ex.: ambiente local sem
+    credenciais) — mesmo espírito de graceful degradation de
+    MediaSerializer.get_url: a introdução em vídeo é decorativa, nunca
+    algo que deva quebrar a tela se a infraestrutura de mídia não estiver
+    disponível.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        try:
+            url = generate_presigned_read_url(GALAXY_INTRO_VIDEO_STORAGE_KEY)
+        except ImproperlyConfigured:
+            raise Http404
+        return Response({"url": url})
+
+
 def _approved_payments_prefetch() -> Prefetch:
     """Etapa Galáxia Viva: usado pelas duas listas de draft (dono e
     recebidas) para que ExperienceDraft.get_galaxy_live_enabled() (ver

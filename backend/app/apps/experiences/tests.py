@@ -109,6 +109,7 @@ def expire_media(media, *, minutes_ago):
 
 
 THEMES_URL = "/api/experiences/themes/"
+GALAXY_INTRO_VIDEO_URL = "/api/experiences/galaxy-intro-video/"
 DRAFT_LIST_URL = "/api/experiences/drafts/"
 
 
@@ -155,6 +156,37 @@ class ThemeListViewTests(TestCase):
             self.assertNotIn("sort_order", item)
             self.assertNotIn("created_at", item)
             self.assertNotIn("updated_at", item)
+
+
+class GalaxyIntroVideoViewTests(TestCase):
+    """GET /api/experiences/galaxy-intro-video/ — mesmo padrão de mock de
+    generate_presigned_read_url já usado em PresignedReadUrlTests/
+    MediaUploadCompleteRegressionTests: nunca alcança a rede de verdade."""
+
+    def test_no_authentication_required(self):
+        with patch(
+            "apps.experiences.views.generate_presigned_read_url",
+            return_value="https://r2.example/signed-video",
+        ):
+            response = APIClient().get(GALAXY_INTRO_VIDEO_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_returns_the_presigned_url(self):
+        with patch(
+            "apps.experiences.views.generate_presigned_read_url",
+            return_value="https://r2.example/signed-video",
+        ) as mocked:
+            response = self.client.get(GALAXY_INTRO_VIDEO_URL)
+        self.assertEqual(response.data, {"url": "https://r2.example/signed-video"})
+        mocked.assert_called_once_with("galaxia.mp4/galaxia.mp4")
+
+    def test_returns_404_when_r2_is_not_configured(self):
+        with patch(
+            "apps.experiences.views.generate_presigned_read_url",
+            side_effect=ImproperlyConfigured("Cloudflare R2 is not configured."),
+        ):
+            response = self.client.get(GALAXY_INTRO_VIDEO_URL)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 class ExperienceDraftThemeValidationTests(TestCase):
