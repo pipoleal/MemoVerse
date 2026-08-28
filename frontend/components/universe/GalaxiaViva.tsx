@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Cormorant_Garamond, Fraunces } from "next/font/google";
 import YouTube from "react-youtube";
 
-import { extractYouTubeVideoId } from "@/lib/youtube";
+import { extractYouTubeVideoId, isValidYouTubeUrl } from "@/lib/youtube";
 
 // Porta de components/universe (ver frontend/CLAUDE.md: sistemas novos de
 // Galáxia vivem aqui, nunca uma segunda implementação em outro lugar) do
@@ -69,6 +69,13 @@ type GalaxiaVivaProps = {
   // o botão de música. NUNCA autoplay — só toca a partir de um clique real
   // no botão que este componente desenha.
   musicUrl?: string;
+  // Presente só quando quem está vendo é o DONO (ver GalaxiaVivaView.tsx:
+  // `selected.relation === "owner"`) — controla se o botão "escolher
+  // música" (mini-formulário) aparece. Ausente: só o botão de play (se já
+  // houver musicUrl) é mostrado, nunca o de editar. Este componente não
+  // sabe COMO isso é persistido (PATCH, endpoint, etc.) — só chama e
+  // espera a Promise resolver/rejeitar, mesma filosofia de `since`.
+  onSaveMusicUrl?: (url: string) => Promise<void>;
 };
 
 // Mesmo padrão de tipo mínimo de MusicPlayer.tsx/LaunchMusicPlayer.tsx —
@@ -179,7 +186,7 @@ function formatarDesde(d: Date): string {
   return `${fmtData.format(d)} às ${fmtHora.format(d)}`;
 }
 
-export default function GalaxiaViva({ since, className = "", musicUrl }: GalaxiaVivaProps) {
+export default function GalaxiaViva({ since, className = "", musicUrl, onSaveMusicUrl }: GalaxiaVivaProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
   const diasAtuaisRef = useRef(0);
@@ -225,6 +232,41 @@ export default function GalaxiaViva({ since, className = "", musicUrl }: Galaxia
     } else {
       musicPlayerRef.current.playVideo();
       setMusicPlaying(true);
+    }
+  }
+
+  // Mini-formulário "escolher música" — o dono cola/troca/remove o link
+  // sem sair desta tela. musicFormValue só é inicializado ao ABRIR o
+  // formulário (openMusicForm), nunca a cada render: reabrir sempre parte
+  // do valor atualmente salvo (musicUrl), nunca de um rascunho velho de
+  // uma abertura anterior.
+  const [musicFormOpen, setMusicFormOpen] = useState(false);
+  const [musicFormValue, setMusicFormValue] = useState("");
+  const [musicFormError, setMusicFormError] = useState("");
+  const [musicFormSaving, setMusicFormSaving] = useState(false);
+
+  function openMusicForm() {
+    setMusicFormValue(musicUrl ?? "");
+    setMusicFormError("");
+    setMusicFormOpen(true);
+  }
+
+  async function handleSaveMusic() {
+    const trimmed = musicFormValue.trim();
+    if (trimmed && !isValidYouTubeUrl(trimmed)) {
+      setMusicFormError("Esse link não parece ser de um vídeo do YouTube (watch, youtu.be ou shorts).");
+      return;
+    }
+
+    setMusicFormSaving(true);
+    setMusicFormError("");
+    try {
+      await onSaveMusicUrl?.(trimmed);
+      setMusicFormOpen(false);
+    } catch {
+      setMusicFormError("Não foi possível salvar agora. Tente novamente.");
+    } finally {
+      setMusicFormSaving(false);
     }
   }
 
@@ -458,50 +500,100 @@ export default function GalaxiaViva({ since, className = "", musicUrl }: Galaxia
       <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0 block h-full w-full" />
 
       {musicVideoId && !musicError && (
-        <>
-          {/* Player invisível (1x1, controls:0) — mesma técnica de
-              MusicPlayer.tsx/LaunchMusicPlayer.tsx. autoplay SEMPRE 0: só
-              toca a partir de um clique real no botão abaixo, nunca
-              sozinho. loop+playlist=próprio id é o truque documentado da
-              IFrame API para repetir um único vídeo (já usado em
-              LaunchMusicPlayer.tsx). */}
-          <div className="pointer-events-none absolute -left-250 -top-250 h-px w-px overflow-hidden opacity-0">
-            <YouTube
-              videoId={musicVideoId}
-              opts={{
-                width: "1",
-                height: "1",
-                playerVars: {
-                  autoplay: 0,
-                  controls: 0,
-                  playsinline: 1,
-                  rel: 0,
-                  loop: 1,
-                  playlist: musicVideoId,
-                },
-              }}
-              onReady={(event) => {
-                musicPlayerRef.current = event.target;
-              }}
-              onError={() => {
-                // Vídeo com embed desabilitado/removido/restrito — nunca
-                // deixa um botão de play em tela que não faria nada.
-                setMusicError(true);
-                setMusicPlaying(false);
-              }}
-            />
-          </div>
+        // Player invisível (1x1, controls:0) — mesma técnica de
+        // MusicPlayer.tsx/LaunchMusicPlayer.tsx. autoplay SEMPRE 0: só toca
+        // a partir de um clique real no botão abaixo, nunca sozinho.
+        // loop+playlist=próprio id é o truque documentado da IFrame API
+        // para repetir um único vídeo (já usado em LaunchMusicPlayer.tsx).
+        <div className="pointer-events-none absolute -left-250 -top-250 h-px w-px overflow-hidden opacity-0">
+          <YouTube
+            videoId={musicVideoId}
+            opts={{
+              width: "1",
+              height: "1",
+              playerVars: {
+                autoplay: 0,
+                controls: 0,
+                playsinline: 1,
+                rel: 0,
+                loop: 1,
+                playlist: musicVideoId,
+              },
+            }}
+            onReady={(event) => {
+              musicPlayerRef.current = event.target;
+            }}
+            onError={() => {
+              // Vídeo com embed desabilitado/removido/restrito — nunca
+              // deixa um botão de play em tela que não faria nada.
+              setMusicError(true);
+              setMusicPlaying(false);
+            }}
+          />
+        </div>
+      )}
 
-          <button
-            type="button"
-            onClick={toggleMusic}
-            aria-label={musicPlaying ? "Pausar música" : "Tocar música"}
-            aria-pressed={musicPlaying}
-            className="pointer-events-auto absolute bottom-4 right-4 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/40 text-lg text-white backdrop-blur-xl transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-300"
-          >
-            <span aria-hidden="true">{musicPlaying ? "⏸" : "▶️"}</span>
-          </button>
-        </>
+      {(onSaveMusicUrl || (musicVideoId && !musicError)) && (
+        <div className="pointer-events-auto absolute bottom-4 right-4 z-20 flex items-center gap-2">
+          {musicVideoId && !musicError && (
+            <button
+              type="button"
+              onClick={toggleMusic}
+              aria-label={musicPlaying ? "Pausar música" : "Tocar música"}
+              aria-pressed={musicPlaying}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/40 text-lg text-white backdrop-blur-xl transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-300"
+            >
+              <span aria-hidden="true">{musicPlaying ? "⏸" : "▶️"}</span>
+            </button>
+          )}
+
+          {onSaveMusicUrl && (
+            <button
+              type="button"
+              onClick={openMusicForm}
+              aria-label="Escolher música da Galáxia Viva"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/40 text-lg text-white backdrop-blur-xl transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-300"
+            >
+              <span aria-hidden="true">🎵</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {musicFormOpen && (
+        <div className="pointer-events-auto absolute bottom-[76px] right-4 z-30 w-72 max-w-[calc(100%-2rem)] rounded-2xl border border-white/15 bg-black/70 p-4 backdrop-blur-xl">
+          <label className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
+            Música da Galáxia Viva
+          </label>
+          <input
+            type="url"
+            value={musicFormValue}
+            onChange={(event) => {
+              setMusicFormValue(event.target.value);
+              setMusicFormError("");
+            }}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-yellow-300"
+          />
+          {musicFormError && <p className="mt-2 text-xs text-red-300">{musicFormError}</p>}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setMusicFormOpen(false)}
+              className="rounded-full px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:text-white"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveMusic}
+              disabled={musicFormSaving}
+              className="rounded-full bg-yellow-300 px-4 py-1.5 text-xs font-semibold text-black transition hover:bg-yellow-200 disabled:opacity-60"
+            >
+              {musicFormSaving ? "Salvando..." : "Salvar"}
+            </button>
+          </div>
+        </div>
       )}
 
       <div

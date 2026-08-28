@@ -3,9 +3,11 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { api } from "@/lib/api";
 import Button from "../ui/Button";
 import DashboardShell from "./DashboardShell";
 import GalaxiaViva from "../universe/GalaxiaViva";
+import GalaxiaVivaIntro from "./GalaxiaVivaIntro";
 import { useGalaxyData } from "./useGalaxyData";
 import { formatDraftDate } from "./ExperienceCard";
 import { getThemeVisual } from "@/lib/themeRegistry";
@@ -35,9 +37,31 @@ export default function GalaxiaVivaView() {
   const router = useRouter();
   const { drafts, loading, error } = useGalaxyData();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // PREVIEW/DEV: introdução em vídeo, um overlay por cima do conteúdo (que
+  // já está montado por baixo desde o início — ver o JSX abaixo) — some com
+  // um fade, nunca gate o conteúdo. Ver GalaxiaVivaIntro.tsx.
+  const [showIntro, setShowIntro] = useState(true);
+  // Sobrescreve galaxy_live_music_url localmente após salvar pelo mini-
+  // formulário (ver saveMusicUrl abaixo) — evita esperar um refetch de
+  // useGalaxyData só pra refletir o que acabamos de confirmar que o
+  // backend já salvou. Por draft id, nunca um valor solto — troca de
+  // experiência selecionada (ExperiencePicker) nunca vaza a música de outra.
+  const [musicOverrides, setMusicOverrides] = useState<Record<string, string>>({});
 
   const eligible = useMemo(() => drafts?.filter(isEligible) ?? null, [drafts]);
   const selected = selectedId ? (eligible?.find((draft) => draft.id === selectedId) ?? null) : (eligible?.[0] ?? null);
+
+  // PATCH direto no draft — mesmo endpoint/serializer que o wizard já usa
+  // (ExperienceDraftSerializer.validate_galaxy_live_music_url já valida no
+  // backend), só que a partir da própria tela da Galáxia Viva. Só o dono
+  // pode chamar isto de verdade (ver o `selected.relation === "owner"` que
+  // condiciona o botão em GalaxiaViva abaixo) — para um "received", a API
+  // recusaria de qualquer forma (get_owned_draft_or_404).
+  async function saveMusicUrl(url: string) {
+    if (!selected) return;
+    await api.patch(`/experiences/drafts/${selected.id}/`, { galaxy_live_music_url: url });
+    setMusicOverrides((previous) => ({ ...previous, [selected.id]: url }));
+  }
 
   return (
     <DashboardShell>
@@ -66,7 +90,11 @@ export default function GalaxiaVivaView() {
               )}
 
               <div className="h-[70vh] min-h-[560px] w-full">
-                <GalaxiaViva since={sinceFromEventDate(selected)} musicUrl={selected.galaxy_live_music_url || undefined} />
+                <GalaxiaViva
+                  since={sinceFromEventDate(selected)}
+                  musicUrl={musicOverrides[selected.id] ?? selected.galaxy_live_music_url ?? undefined}
+                  onSaveMusicUrl={selected.relation === "owner" ? saveMusicUrl : undefined}
+                />
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -78,6 +106,8 @@ export default function GalaxiaVivaView() {
                   Ver experiência completa
                 </Button>
               </div>
+
+              {showIntro && <GalaxiaVivaIntro onFinish={() => setShowIntro(false)} />}
             </>
           )}
         </div>
