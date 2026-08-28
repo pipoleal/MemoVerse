@@ -4,6 +4,8 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
+import { getStarTexture } from "@/lib/starTexture";
+
 type GalaxyPhase =
   | "planet"
   | "particles"
@@ -17,28 +19,58 @@ type GalaxyTransitionProps = {
 
 const PARTICLE_COUNT = 8000;
 
-// THREE.PointsMaterial with no `map` renders every point as a hard-edged,
-// axis-aligned square (WebGL's raw GL_POINTS rasterization) — that square is
-// the visual artifact this fixes. A real radial-gradient alpha texture makes
-// each particle a soft round mote instead. 64px is plenty since each point
-// only ever covers a handful of screen pixels.
-function createDustTexture(): THREE.CanvasTexture {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
-  const center = size / 2;
-  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.35, "rgba(255,244,214,0.8)");
-  gradient.addColorStop(1, "rgba(255,244,214,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
+// Mesma câmera de GalaxyChapter.tsx (position [0,0,12]) — a referência de
+// distância do shader abaixo é calibrada para ela, mesmo padrão de
+// MemoryStars.tsx (que também fixa sua referência na câmera padrão da
+// UniverseEngine). BASE_POINT_SIZE foi calibrado visualmente para
+// reproduzir a mesma escala de nuvem de poeira que o THREE.PointsMaterial
+// (size=0.016) desenhava antes desta mudança — não é o mesmo sistema de
+// unidades do PointsMaterial, só o resultado visual comparável.
+const BASE_POINT_SIZE = 4;
+const ATTENUATION_REFERENCE_DISTANCE = 12;
+
+// Vertex/fragment shader — mesma família de MemoryStars.tsx (pulso de
+// brilho por partícula via uTime+aPhase, tamanho por partícula via aSize,
+// texture2D amostrada em gl_PointCoord com discard sob um limiar de alfa
+// para nunca deixar o quadrado/retângulo cru do GL_POINTS aparecer). A
+// única diferença real: aqui a opacidade GLOBAL da nuvem (uOpacity, que
+// sobe/desce por fase em useFrame abaixo) entra multiplicada no alfa final
+// — em MemoryStars não existe essa noção de "opacidade da cena toda".
+const VERTEX_SHADER = `
+  attribute float aPhase;
+  attribute float aSize;
+  uniform float uTime;
+  varying float vGlow;
+
+  void main() {
+    float pulse = 0.82 + 0.18 * sin(uTime * 0.6 + aPhase);
+    vGlow = pulse;
+
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = aSize * ${BASE_POINT_SIZE.toFixed(1)} * pulse * (${ATTENUATION_REFERENCE_DISTANCE.toFixed(1)} / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const FRAGMENT_SHADER = `
+  uniform sampler2D uTexture;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  varying float vGlow;
+
+  void main() {
+    vec4 tex = texture2D(uTexture, gl_PointCoord);
+    // Limiar bem mais alto que o de MemoryStars.tsx (0.02): partículas
+    // aqui têm poucos pixels de lado (nuvem inicial bem compacta), então a
+    // GPU amostra a textura já num mip bem reduzido — nesse nível, a média
+    // do halo amplo por si só já passa de 0.02 em quase todo o sprite
+    // (vira um quadrado sólido, exatamente o bug antigo). Um limiar alto
+    // descarta esse halo médio e deixa passar só o núcleo de verdade,
+    // preservando o formato redondo mesmo num ponto pequeno.
+    if (tex.a < 0.5) discard;
+    gl_FragColor = vec4(uColor * (0.7 + 0.5 * vGlow), tex.a * uOpacity);
+  }
+`;
 
 export default function GalaxyTransition({
   active,
@@ -46,19 +78,45 @@ export default function GalaxyTransition({
 }: GalaxyTransitionProps) {
   const pointsRef = useRef<THREE.Points>(null);
   const materialRef =
-    useRef<THREE.PointsMaterial>(null);
+    useRef<THREE.ShaderMaterial>(null);
 
-  // Generated once (real canvas work, not per-frame) — same lifetime as the
-  // component instance, exactly like `geometry` below.
-  const dustTexture = useMemo(() => createDustTexture(), []);
+  // Mesma textura procedural (halo + raios + núcleo) que Minha Galáxia já
+  // usa — singleton compartilhado, nunca uma segunda geração de canvas.
+  const starTexture = useMemo(() => getStarTexture(), []);
+
+  const uniforms = useMemo(
+    () => ({
+      uTime: { value: 0 },
+      uTexture: { value: starTexture },
+      uColor: { value: new THREE.Color(0xfff2d0) },
+      uOpacity: { value: 0 },
+    }),
+    [starTexture]
+  );
 
   const geometry = useMemo(() => {
     const positions = new Float32Array(
       PARTICLE_COUNT * 3
     );
+    // aPhase (fase do brilho pulsante) e aSize (variação de tamanho) —
+    // preenchidos NO MESMO loop que já constrói as posições abaixo, nunca
+    // um segundo loop por partícula. Sementes deterministas, mesmo estilo
+    // de seedA/seedB/seedC já usado neste arquivo para a posição.
+    const phases = new Float32Array(PARTICLE_COUNT);
+    const sizes = new Float32Array(PARTICLE_COUNT);
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const index = i * 3;
+
+      const seedD =
+        Math.sin(i * 94.673) *
+        43758.5453;
+      const seedE =
+        Math.sin(i * 27.192) *
+        43758.5453;
+
+      phases[i] = Math.abs(seedD % 1) * Math.PI * 2;
+      sizes[i] = 0.6 + Math.abs(seedE % 1) * 0.8;
 
       /*
        * Valores determinísticos.
@@ -147,11 +205,13 @@ export default function GalaxyTransition({
         3
       )
     );
+    geometry.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
+    geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
 
     return geometry;
   }, []);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     if (!pointsRef.current) {
       return;
     }
@@ -159,12 +219,16 @@ export default function GalaxyTransition({
     const material =
       materialRef.current;
 
+    if (material) {
+      material.uniforms.uTime.value = state.clock.elapsedTime;
+    }
+
     /*
      * Antes de começar.
      */
     if (!active) {
       if (material) {
-        material.opacity = 0;
+        material.uniforms.uOpacity.value = 0;
       }
 
       return;
@@ -200,9 +264,9 @@ export default function GalaxyTransition({
     }
 
     if (material) {
-      material.opacity +=
+      material.uniforms.uOpacity.value +=
         (targetOpacity -
-          material.opacity) *
+          material.uniforms.uOpacity.value) *
         Math.min(delta * 2, 1);
     }
 
@@ -419,16 +483,14 @@ export default function GalaxyTransition({
       ref={pointsRef}
       geometry={geometry}
     >
-      <pointsMaterial
+      <shaderMaterial
         ref={materialRef}
-        map={dustTexture}
-        color={0xfff2d0}
-        size={0.016}
-        sizeAttenuation
         transparent
-        opacity={0}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
+        vertexShader={VERTEX_SHADER}
+        fragmentShader={FRAGMENT_SHADER}
+        uniforms={uniforms}
       />
     </points>
   );
