@@ -2,10 +2,8 @@
 // (via DashboardShell) Dashboard/Minha Galáxia. Nenhum estado/interação
 // própria (só links reais), por isso não precisa de "use client".
 //
-// "Sobre", "Termos de Uso" e "Política de Privacidade" ainda não têm rota
-// real no app (nenhuma dessas páginas existe hoje) — ficam como texto
-// preparado, não como link, para nunca apontar para uma página inexistente.
-// Trocar por <Link> assim que as rotas existirem.
+import Link from "next/link";
+
 // Número oficial: (55) 12 99243-2849 — wa.me exige só dígitos (país + DDD +
 // número), por isso não há uma constante de exibição separada: o número
 // nunca aparece como texto no rodapé agora, só o ícone (ver aria-label).
@@ -118,9 +116,15 @@ export default function Footer({ variant = "full", className = "" }: FooterProps
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-yellow-400">Institucional</h3>
           <ul className="mt-4 space-y-2 text-sm text-slate-500">
-            <li title="Em breve">Sobre</li>
-            <li title="Em breve">Termos de Uso</li>
-            <li title="Em breve">Política de Privacidade</li>
+            <li>
+              <Link className="transition hover:text-white" href="/sobre">Sobre</Link>
+            </li>
+            <li>
+              <Link className="transition hover:text-white" href="/termos-de-uso">Termos de Uso</Link>
+            </li>
+            <li>
+              <Link className="transition hover:text-white" href="/politica-de-privacidade">Política de Privacidade</Link>
+            </li>
           </ul>
         </div>
       </div>
