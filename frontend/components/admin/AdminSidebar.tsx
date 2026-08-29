@@ -84,7 +84,7 @@ export default function AdminSidebar({ mobileOpen, onClose }: AdminSidebarProps)
           <SidebarPreparedItem icon="👥" label="Usuários" />
           <SidebarPreparedItem icon="🌌" label="Experiências" />
           <SidebarPreparedItem icon="💳" label="Pagamentos" />
-          <SidebarPreparedItem icon="♻️" label="Lifecycle" />
+          <SidebarLink href="/admin/lifecycle" icon="♻️" label="Lifecycle" active={pathname === "/admin/lifecycle"} />
           <SidebarPreparedItem icon="📜" label="Logs" />
           <SidebarPreparedItem icon="⚙️" label="Configurações" />
         </nav>
