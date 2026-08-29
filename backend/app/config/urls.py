@@ -13,10 +13,9 @@ urlpatterns = [
     # api/experiences/ (que é toda autenticada/ownership) para deixar
     # explícito, só pela URL, que esta rota é pública.
     path("api/public/experiences/<slug:slug>/", PublicExperienceView.as_view(), name="public-experience"),
-    # Etapa 9B.4: painel administrativo read-only temporário — cada view
-    # exige IsAuthenticated + IsProductionAdmin (is_superuser real, ver
+    # Backend read-only do painel administrativo (frontend em /admin) —
+    # cada view exige IsAuthenticated + IsProductionAdmin (ver
     # apps.accounts.permissions.IsProductionAdmin), nunca alcançável sem
-    # essas duas checagens. Remover junto com apps.ops quando a 9B.4
-    # terminar (ver apps/ops/__init__.py).
+    # essas duas checagens (ver apps/ops/__init__.py).
     path("api/ops/9b4/", include("apps.ops.urls")),
 ]

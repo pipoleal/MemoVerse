@@ -24,28 +24,6 @@ function SidebarLink({ href, icon, label, active }: { href: string; icon: string
   );
 }
 
-// Mesmo padrão de components/dashboard/Sidebar.tsx (SidebarPreparedItem):
-// itens sem rota ainda — preparados visualmente para as próximas etapas do
-// painel administrativo (Usuários, Experiências, Pagamentos, Lifecycle,
-// Logs, Configurações), nunca um link falso.
-function SidebarPreparedItem({ icon, label }: { icon: string; label: string }) {
-  return (
-    <div
-      className="flex cursor-not-allowed items-center justify-between rounded-2xl px-4 py-3 text-sm font-semibold text-slate-500"
-      title="Em breve"
-    >
-      <span className="flex items-center gap-3">
-        <span className="text-lg opacity-60">{icon}</span>
-        {label}
-      </span>
-
-      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-bold tracking-wide text-slate-300">
-        EM BREVE
-      </span>
-    </div>
-  );
-}
-
 export default function AdminSidebar({ mobileOpen, onClose }: AdminSidebarProps) {
   const pathname = usePathname();
 
@@ -80,13 +58,22 @@ export default function AdminSidebar({ mobileOpen, onClose }: AdminSidebarProps)
 
         <nav className="flex flex-1 flex-col gap-1 px-4">
           <SidebarLink href="/admin" icon="📊" label="Dashboard" active={pathname === "/admin"} />
-
-          <SidebarPreparedItem icon="👥" label="Usuários" />
-          <SidebarPreparedItem icon="🌌" label="Experiências" />
-          <SidebarPreparedItem icon="💳" label="Pagamentos" />
+          <SidebarLink href="/admin/users" icon="👥" label="Usuários" active={pathname === "/admin/users"} />
+          <SidebarLink
+            href="/admin/experiences"
+            icon="🌌"
+            label="Experiências"
+            active={pathname === "/admin/experiences"}
+          />
+          <SidebarLink href="/admin/payments" icon="💳" label="Pagamentos" active={pathname === "/admin/payments"} />
           <SidebarLink href="/admin/lifecycle" icon="♻️" label="Lifecycle" active={pathname === "/admin/lifecycle"} />
-          <SidebarPreparedItem icon="📜" label="Logs" />
-          <SidebarPreparedItem icon="⚙️" label="Configurações" />
+          <SidebarLink href="/admin/logs" icon="📜" label="Logs" active={pathname === "/admin/logs"} />
+          <SidebarLink
+            href="/admin/settings"
+            icon="⚙️"
+            label="Configurações"
+            active={pathname === "/admin/settings"}
+          />
         </nav>
 
         <div className="border-t border-white/10 px-6 py-4">

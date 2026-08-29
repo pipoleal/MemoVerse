@@ -1,9 +1,10 @@
-"""Etapa 9B.4 — painel administrativo read-only, exclusivamente para gerar
-os relatórios de lifecycle/reconciliação em ambientes sem acesso a shell
-(ex.: produção no Render sem Render Shell disponível).
+"""Backend read-only do painel administrativo (frontend em /admin) —
+nasceu na Etapa 9B.4 como os 3 relatórios de lifecycle/reconciliação, e
+agora também serve as listagens (usuários/experiências/pagamentos/logs) e
+o snapshot de configuração que o painel consome. Toda view aqui é GET-only
+e exige IsAuthenticated + IsProductionAdmin (ver
+apps.accounts.permissions) — nenhuma exceção, nenhuma mutação.
 
-Este app existe só enquanto durar a 9B.4. Não tem nenhum model (logo,
-nenhuma migration) — remover depois é: apagar este diretório, tirar
-"apps.ops" de INSTALLED_APPS e o include() correspondente de config/urls.py.
-Nenhum outro app depende dele.
+Não tem nenhum model (logo, nenhuma migration). Nenhum outro app depende
+dele.
 """

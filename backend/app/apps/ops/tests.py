@@ -31,7 +31,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.experiences.models import ExperienceDraft, Media
-from apps.payments.models import Payment, Plan
+from apps.payments.models import Payment, Plan, WebhookEvent
 
 User = get_user_model()
 
@@ -459,3 +459,213 @@ class ReportContentAndReadOnlyTests(TestCase):
         after = snapshot()
 
         self.assertEqual(before, after)
+
+
+# ----------------------------------------------------------------------
+# Listagens administrativas do painel /admin (Usuários/Experiências/
+# Pagamentos/Logs/Configurações) — mesmas garantias de auth/read-only das
+# 3 rotas da 9B.4, cobertas em classes separadas (não misturadas em
+# ALL_URLS) para manter os nomes dos testes acima ("...on_all_three_
+# routes") literalmente corretos.
+# ----------------------------------------------------------------------
+
+ADMIN_USERS_URL = "/api/ops/9b4/users/"
+ADMIN_EXPERIENCES_URL = "/api/ops/9b4/experiences/"
+ADMIN_PAYMENTS_URL = "/api/ops/9b4/payments/"
+ADMIN_WEBHOOK_EVENTS_URL = "/api/ops/9b4/webhook-events/"
+ADMIN_SETTINGS_URL = "/api/ops/9b4/settings-snapshot/"
+ADMIN_LIST_URLS = (
+    ADMIN_USERS_URL,
+    ADMIN_EXPERIENCES_URL,
+    ADMIN_PAYMENTS_URL,
+    ADMIN_WEBHOOK_EVENTS_URL,
+    ADMIN_SETTINGS_URL,
+)
+
+
+class AdminListEndpointsAuthenticationTests(TestCase):
+    def test_anonymous_gets_401_on_all_admin_list_routes(self):
+        client = APIClient()
+        for url in ADMIN_LIST_URLS:
+            response = client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED, url)
+
+    def test_regular_authenticated_user_gets_403_on_all_admin_list_routes(self):
+        user = make_regular_user()
+        client = auth_client(user)
+        for url in ADMIN_LIST_URLS:
+            response = client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, url)
+
+    def test_staff_without_superuser_gets_403_on_all_admin_list_routes(self):
+        user = make_staff_non_superuser()
+        client = auth_client(user)
+        for url in ADMIN_LIST_URLS:
+            response = client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, url)
+
+    def test_superuser_gets_200_on_all_admin_list_routes(self):
+        admin = make_superuser()
+        client = auth_client(admin)
+        for url in ADMIN_LIST_URLS:
+            with assert_no_writes():
+                response = client.get(url)
+            self.assertEqual(response.status_code, status.HTTP_200_OK, url)
+
+
+class AdminListEndpointsMethodNotAllowedTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser())
+
+    def test_post_put_patch_delete_are_rejected(self):
+        for url in ADMIN_LIST_URLS:
+            for method in ("post", "put", "patch", "delete"):
+                with assert_no_writes():
+                    response = getattr(self.client, method)(url, data={})
+                self.assertEqual(
+                    response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED, f"{method.upper()} {url}"
+                )
+
+
+class UserListViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-lister@example.com"))
+
+    def test_never_exposes_password_field(self):
+        make_regular_user("someone-listed@example.com")
+        response = self.client.get(ADMIN_USERS_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertIn("results", body)
+        self.assertGreater(len(body["results"]), 0)
+        for row in body["results"]:
+            self.assertNotIn("password", row)
+
+    def test_is_admin_reflects_is_production_admin_never_a_second_rule(self):
+        make_regular_user("regular-for-list@example.com")
+        make_superuser("super-for-list@example.com")
+        response = self.client.get(ADMIN_USERS_URL)
+        rows_by_email = {row["email"]: row for row in response.json()["results"]}
+        self.assertFalse(rows_by_email["regular-for-list@example.com"]["is_admin"])
+        self.assertTrue(rows_by_email["super-for-list@example.com"]["is_admin"])
+
+    def test_pagination_limit_and_offset_are_respected(self):
+        for i in range(5):
+            make_regular_user(f"paginated-{i}@example.com")
+        response = self.client.get(ADMIN_USERS_URL, {"limit": "2", "offset": "0"})
+        body = response.json()
+        self.assertEqual(len(body["results"]), 2)
+        self.assertEqual(body["limit"], 2)
+        self.assertGreaterEqual(body["count"], 6)
+
+    def test_out_of_bounds_limit_is_rejected_with_400(self):
+        response = self.client.get(ADMIN_USERS_URL, {"limit": "999999"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class ExperienceListViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-exp@example.com"))
+
+    def test_never_exposes_private_content_fields(self):
+        owner = make_regular_user("owner-exp@example.com")
+        make_draft(owner, title="Titulo Secreto", letter="Carta privada", recipient_name="Fulano")
+        response = self.client.get(ADMIN_EXPERIENCES_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for row in response.json()["results"]:
+            for forbidden_field in (
+                "title",
+                "letter",
+                "recipient_name",
+                "creator_name",
+                "short_message",
+                "context_answer",
+                "music_url",
+            ):
+                self.assertNotIn(forbidden_field, row)
+
+    def test_status_filter_only_returns_matching_rows(self):
+        owner = make_regular_user("owner-exp-2@example.com")
+        make_draft(owner, status=ExperienceDraft.Status.PUBLISHED, slug="abcdefgh")
+        make_draft(owner, status=ExperienceDraft.Status.DRAFT)
+        response = self.client.get(ADMIN_EXPERIENCES_URL, {"status": "published"})
+        body = response.json()
+        self.assertGreater(len(body["results"]), 0)
+        self.assertTrue(all(row["status"] == "published" for row in body["results"]))
+
+    def test_invalid_status_is_rejected_with_400(self):
+        response = self.client.get(ADMIN_EXPERIENCES_URL, {"status": "not-a-real-status"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class PaymentListViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-pay@example.com"))
+
+    def test_never_exposes_last_sync_payload(self):
+        owner = make_regular_user("owner-pay@example.com")
+        draft = make_draft(owner)
+        make_payment(draft=draft, last_sync_payload={"card_secret": "should-never-leak"})
+        response = self.client.get(ADMIN_PAYMENTS_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()["results"]
+        self.assertGreater(len(results), 0)
+        for row in results:
+            self.assertNotIn("last_sync_payload", row)
+
+    def test_status_filter_only_returns_matching_rows(self):
+        owner = make_regular_user("owner-pay-2@example.com")
+        draft1 = make_draft(owner)
+        make_payment(draft=draft1, status=Payment.Status.APPROVED)
+        draft2 = make_draft(owner)
+        make_payment(draft=draft2, status=Payment.Status.REJECTED)
+        response = self.client.get(ADMIN_PAYMENTS_URL, {"status": "approved"})
+        body = response.json()
+        self.assertGreater(len(body["results"]), 0)
+        self.assertTrue(all(row["status"] == "approved" for row in body["results"]))
+
+
+class WebhookEventListViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-log@example.com"))
+
+    def test_never_exposes_raw_payload(self):
+        WebhookEvent.objects.create(
+            notification_id="notif-admin-panel-test",
+            topic="payment",
+            resource_id="res-1",
+            payload={"card": {"secret": "should-never-leak"}},
+            status=WebhookEvent.Status.PROCESSED,
+        )
+        response = self.client.get(ADMIN_WEBHOOK_EVENTS_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()["results"]
+        self.assertGreater(len(results), 0)
+        for row in results:
+            self.assertNotIn("payload", row)
+
+
+class SettingsSnapshotViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-settings@example.com"))
+
+    def test_never_exposes_secret_looking_fields(self):
+        response = self.client.get(ADMIN_SETTINGS_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        forbidden_keys = {
+            "secret_key",
+            "mp_access_token",
+            "mp_webhook_secret",
+            "r2_access_key_id",
+            "r2_secret_access_key",
+            "database_url",
+            "resend_api_key",
+        }
+        self.assertFalse(forbidden_keys & set(body.keys()))
+
+    def test_returns_expected_shape(self):
+        response = self.client.get(ADMIN_SETTINGS_URL)
+        body = response.json()
+        for key in ("debug", "mercado_pago_environment", "r2_configured", "email_backend", "allowed_hosts"):
+            self.assertIn(key, body)
