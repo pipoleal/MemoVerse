@@ -562,6 +562,15 @@ class UserListViewTests(TestCase):
         response = self.client.get(ADMIN_USERS_URL, {"limit": "999999"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_email_search_is_case_insensitive_partial_match(self):
+        make_regular_user("suporte-alvo@example.com")
+        make_regular_user("outra-pessoa@example.com")
+        response = self.client.get(ADMIN_USERS_URL, {"email": "SUPORTE-alvo"})
+        body = response.json()
+        emails = {row["email"] for row in body["results"]}
+        self.assertIn("suporte-alvo@example.com", emails)
+        self.assertNotIn("outra-pessoa@example.com", emails)
+
 
 class ExperienceListViewTests(TestCase):
     def setUp(self):
@@ -597,6 +606,16 @@ class ExperienceListViewTests(TestCase):
         response = self.client.get(ADMIN_EXPERIENCES_URL, {"status": "not-a-real-status"})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_owner_email_search_is_case_insensitive_partial_match(self):
+        target_owner = make_regular_user("suporte-exp-alvo@example.com")
+        other_owner = make_regular_user("outra-exp@example.com")
+        make_draft(target_owner)
+        make_draft(other_owner)
+        response = self.client.get(ADMIN_EXPERIENCES_URL, {"owner_email": "SUPORTE-exp-alvo"})
+        body = response.json()
+        self.assertGreater(len(body["results"]), 0)
+        self.assertTrue(all(row["owner_email"] == "suporte-exp-alvo@example.com" for row in body["results"]))
+
 
 class PaymentListViewTests(TestCase):
     def setUp(self):
@@ -623,6 +642,16 @@ class PaymentListViewTests(TestCase):
         body = response.json()
         self.assertGreater(len(body["results"]), 0)
         self.assertTrue(all(row["status"] == "approved" for row in body["results"]))
+
+    def test_owner_email_search_is_case_insensitive_partial_match(self):
+        target_owner = make_regular_user("suporte-pay-alvo@example.com")
+        other_owner = make_regular_user("outra-pay@example.com")
+        make_payment(draft=make_draft(target_owner))
+        make_payment(draft=make_draft(other_owner))
+        response = self.client.get(ADMIN_PAYMENTS_URL, {"owner_email": "SUPORTE-pay-alvo"})
+        body = response.json()
+        self.assertGreater(len(body["results"]), 0)
+        self.assertTrue(all(row["owner_email"] == "suporte-pay-alvo@example.com" for row in body["results"]))
 
 
 class WebhookEventListViewTests(TestCase):
@@ -669,3 +698,242 @@ class SettingsSnapshotViewTests(TestCase):
         body = response.json()
         for key in ("debug", "mercado_pago_environment", "r2_configured", "email_backend", "allowed_hosts"):
             self.assertIn(key, body)
+
+
+# ----------------------------------------------------------------------
+# Detalhe de experiência (moderação, conteúdo privado) e as 2 únicas
+# rotas de escrita do módulo — UserDeleteView e PaymentCancelView.
+# Autorizadas explicitamente pelo dono do produto; cada uma prova suas
+# próprias salvaguardas (nunca excluir admin/self, nunca excluir usuário
+# com Payment, nunca chamar a Mercado Pago, rollback total se qualquer
+# draft não puder ser excluído).
+# ----------------------------------------------------------------------
+
+
+def _user_delete_url(user_id) -> str:
+    return f"/api/ops/9b4/users/{user_id}/"
+
+
+def _experience_detail_url(draft_id) -> str:
+    return f"/api/ops/9b4/experiences/{draft_id}/"
+
+
+def _payment_cancel_url(payment_id) -> str:
+    return f"/api/ops/9b4/payments/{payment_id}/cancel/"
+
+
+class ExperienceDetailViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-exp-detail@example.com"))
+
+    def test_anonymous_gets_401(self):
+        owner = make_regular_user("owner-detail-401@example.com")
+        draft = make_draft(owner, title="Segredo")
+        response = APIClient().get(_experience_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_regular_user_gets_403(self):
+        owner = make_regular_user("owner-detail-403@example.com")
+        draft = make_draft(owner, title="Segredo")
+        client = auth_client(make_regular_user("actor-detail-403@example.com"))
+        response = client.get(_experience_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_sees_full_private_content(self):
+        owner = make_regular_user("owner-detail@example.com")
+        draft = make_draft(
+            owner,
+            title="Titulo Real",
+            letter="Carta completa aqui",
+            recipient_name="Fulano",
+            creator_name="Beltrano",
+        )
+        response = self.client.get(_experience_detail_url(draft.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.json()
+        self.assertEqual(body["title"], "Titulo Real")
+        self.assertEqual(body["letter"], "Carta completa aqui")
+        self.assertEqual(body["recipient_name"], "Fulano")
+        self.assertEqual(body["creator_name"], "Beltrano")
+
+    def test_uploaded_media_gets_presigned_url_pending_does_not(self):
+        owner = make_regular_user("owner-detail-media@example.com")
+        draft = make_draft(owner)
+        uploaded = make_media(draft, upload_status=Media.UploadStatus.UPLOADED)
+        pending = make_media(draft, upload_status=Media.UploadStatus.PENDING)
+
+        with patch("apps.ops.views.generate_presigned_read_url", return_value="https://signed.example/x"):
+            response = self.client.get(_experience_detail_url(draft.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        media_by_id = {row["id"]: row for row in response.json()["media"]}
+        self.assertEqual(media_by_id[str(uploaded.id)]["url"], "https://signed.example/x")
+        self.assertIsNone(media_by_id[str(pending.id)]["url"])
+
+    def test_nonexistent_draft_returns_404(self):
+        response = self.client.get(_experience_detail_url(uuid.uuid4()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class UserDeleteViewTests(TestCase):
+    def setUp(self):
+        self.admin = make_superuser("admin-delete@example.com")
+        self.client = auth_client(self.admin)
+
+    def test_anonymous_gets_401(self):
+        target = make_regular_user("target-401@example.com")
+        response = APIClient().delete(_user_delete_url(target.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_regular_user_gets_403(self):
+        target = make_regular_user("target-403@example.com")
+        client = auth_client(make_regular_user("actor-403@example.com"))
+        response = client.delete(_user_delete_url(target.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cannot_delete_self(self):
+        response = self.client.delete(_user_delete_url(self.admin.id))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=self.admin.id).exists())
+
+    def test_cannot_delete_another_superuser_admin(self):
+        other_admin = make_superuser("other-admin@example.com")
+        response = self.client.delete(_user_delete_url(other_admin.id))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=other_admin.id).exists())
+
+    @override_settings(MEMOVERSE_ADMIN_EMAIL="email-admin-target@example.com")
+    def test_cannot_delete_email_based_admin(self):
+        target = make_regular_user("email-admin-target@example.com")
+        response = self.client.delete(_user_delete_url(target.id))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=target.id).exists())
+
+    def test_cannot_delete_user_with_any_payment_even_terminal(self):
+        target = make_regular_user("has-payment@example.com")
+        draft = make_draft(target)
+        make_payment(draft=draft, status=Payment.Status.CANCELLED)
+
+        response = self.client.delete(_user_delete_url(target.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(User.objects.filter(pk=target.id).exists())
+        self.assertTrue(ExperienceDraft.objects.filter(pk=draft.id).exists())
+
+    def test_deletes_user_with_only_draft_status_experiences_and_no_payments(self):
+        target = make_regular_user("clean-target@example.com")
+        draft1 = make_draft(target, status=ExperienceDraft.Status.DRAFT)
+        draft2 = make_draft(target, status=ExperienceDraft.Status.DRAFT)
+        media = make_media(draft1)
+
+        response = self.client.delete(_user_delete_url(target.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(User.objects.filter(pk=target.id).exists())
+        self.assertFalse(ExperienceDraft.objects.filter(pk__in=[draft1.id, draft2.id]).exists())
+        self.assertFalse(Media.objects.filter(pk=media.id).exists())
+
+    def test_rolls_back_entirely_if_any_draft_cannot_be_deleted(self):
+        # Cenário estruturalmente inconsistente de propósito (um draft
+        # awaiting_payment sem Payment nunca deveria existir) — prova que
+        # a view nunca exclui parcialmente: se QUALQUER draft for
+        # recusado por DraftDeletionService, nada é apagado, nem o outro
+        # draft (deletável sozinho) nem o usuário.
+        target = make_regular_user("partial-fail@example.com")
+        deletable = make_draft(target, status=ExperienceDraft.Status.DRAFT)
+        stuck = make_draft(target, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+
+        response = self.client.delete(_user_delete_url(target.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(User.objects.filter(pk=target.id).exists())
+        self.assertTrue(ExperienceDraft.objects.filter(pk=deletable.id).exists())
+        self.assertTrue(ExperienceDraft.objects.filter(pk=stuck.id).exists())
+
+    def test_nonexistent_user_returns_404(self):
+        response = self.client.delete(_user_delete_url(uuid.uuid4()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_get_is_not_allowed_on_user_delete_route(self):
+        target = make_regular_user("method-check@example.com")
+        response = self.client.get(_user_delete_url(target.id))
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+class PaymentCancelViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-cancel@example.com"))
+
+    def test_anonymous_gets_401(self):
+        owner = make_regular_user("owner-cancel-401@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, status=Payment.Status.PENDING)
+        response = APIClient().post(_payment_cancel_url(payment.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_regular_user_gets_403(self):
+        owner = make_regular_user("owner-cancel-403@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, status=Payment.Status.PENDING)
+        client = auth_client(make_regular_user("actor-cancel-403@example.com"))
+        response = client.post(_payment_cancel_url(payment.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cancels_pending_payment_and_marks_draft_payment_failed(self):
+        owner = make_regular_user("owner-cancel@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, status=Payment.Status.PENDING)
+
+        response = self.client.post(_payment_cancel_url(payment.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.CANCELLED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAYMENT_FAILED)
+
+    def test_does_not_touch_draft_not_in_awaiting_payment(self):
+        owner = make_regular_user("owner-cancel-2@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.PAID)
+        payment = make_payment(draft=draft, status=Payment.Status.ACTION_REQUIRED, attempt_number=2)
+
+        response = self.client.post(_payment_cancel_url(payment.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payment.refresh_from_db()
+        draft.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.CANCELLED)
+        self.assertEqual(draft.status, ExperienceDraft.Status.PAID)
+
+    def test_already_terminal_payment_is_rejected_with_409(self):
+        owner = make_regular_user("owner-cancel-3@example.com")
+        draft = make_draft(owner)
+        payment = make_payment(draft=draft, status=Payment.Status.APPROVED)
+
+        response = self.client.post(_payment_cancel_url(payment.id))
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, Payment.Status.APPROVED)
+
+    def test_never_calls_mercado_pago(self):
+        owner = make_regular_user("owner-cancel-4@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, status=Payment.Status.PENDING)
+
+        with patch("apps.payments.services.payment_confirmation_service.MercadoPagoClient") as mock_client:
+            response = self.client.post(_payment_cancel_url(payment.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_client.assert_not_called()
+
+    def test_nonexistent_payment_returns_404(self):
+        response = self.client.post(_payment_cancel_url(uuid.uuid4()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_get_is_not_allowed_on_payment_cancel_route(self):
+        owner = make_regular_user("owner-cancel-5@example.com")
+        draft = make_draft(owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
+        payment = make_payment(draft=draft, status=Payment.Status.PENDING)
+        response = self.client.get(_payment_cancel_url(payment.id))
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)

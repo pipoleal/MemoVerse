@@ -1,14 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import AdminPagination from "@/components/admin/AdminPagination";
 import { useAdminPaginatedList } from "@/components/admin/useAdminPaginatedList";
+import { useDebouncedValue } from "@/components/admin/useDebouncedValue";
 
 // Forma de cada linha de GET /api/ops/9b4/experiences/ (ver
 // apps.ops.views.ExperienceListView) — só metadados operacionais, nunca
 // title/letter/recipient_name/creator_name/short_message/context_answer
-// nem qualquer URL de mídia (conteúdo privado do usuário).
+// nem qualquer URL de mídia (conteúdo privado do usuário) — isso só
+// aparece no detalhe (/admin/experiences/[id]), sob clique explícito.
 type AdminExperienceRow = {
   id: string;
   owner_email: string | null;
@@ -40,11 +43,16 @@ function formatDate(iso: string | null): string {
 export default function ExperiencesView() {
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 400);
+
   const { data, loading, error } = useAdminPaginatedList<AdminExperienceRow>(
     "/ops/9b4/experiences/",
     LIMIT,
     offset,
-    statusFilter || undefined
+    statusFilter || undefined,
+    "owner_email",
+    debouncedSearch
   );
 
   return (
@@ -53,25 +61,36 @@ export default function ExperiencesView() {
         <div>
           <h1 className="text-2xl font-black sm:text-3xl">Experiências</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Só metadados (status, datas, dono) — nunca o conteúdo privado da experiência.
+            Clique numa linha para ver o conteúdo completo (moderação) — a listagem mostra só metadados.
           </p>
         </div>
 
-        <select
-          value={statusFilter}
-          onChange={(event) => {
-            setStatusFilter(event.target.value);
-            setOffset(0);
-          }}
-          className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-slate-200 backdrop-blur-xl"
-        >
-          <option value="">Todos os status</option>
-          {Object.entries(STATUS_LABELS).map(([value, label]) => (
-            <option key={value} value={value} className="bg-slate-900">
-              {label}
-            </option>
-          ))}
-        </select>
+        <div className="flex flex-wrap gap-3">
+          <input
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setOffset(0);
+            }}
+            placeholder="Buscar por e-mail do dono…"
+            className="w-64 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-slate-200 placeholder:text-slate-500 backdrop-blur-xl focus:border-yellow-400/40 focus:outline-none"
+          />
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value);
+              setOffset(0);
+            }}
+            className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-slate-200 backdrop-blur-xl"
+          >
+            <option value="">Todos os status</option>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <option key={value} value={value} className="bg-slate-900">
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {error && (
@@ -101,20 +120,34 @@ export default function ExperiencesView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
+                {data.results.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-10 text-center text-slate-500 sm:px-8">
+                      Nenhuma experiência encontrada.
+                    </td>
+                  </tr>
+                )}
                 {data.results.map((exp) => (
-                  <tr key={exp.id} className="transition hover:bg-white/5">
-                    <td className="px-6 py-4 text-slate-400 sm:px-8">{exp.owner_email ?? "— (anônimo)"}</td>
-                    <td className="px-6 py-4 sm:px-8">
-                      <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-semibold text-slate-300">
-                        {STATUS_LABELS[exp.status]}
-                      </span>
+                  <tr key={exp.id}>
+                    <td colSpan={6} className="p-0">
+                      <Link
+                        href={`/admin/experiences/${exp.id}`}
+                        className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] items-center px-6 py-4 transition hover:bg-white/5 sm:px-8"
+                      >
+                        <span className="text-slate-400">{exp.owner_email ?? "— (anônimo)"}</span>
+                        <span>
+                          <span className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-semibold text-slate-300">
+                            {STATUS_LABELS[exp.status]}
+                          </span>
+                        </span>
+                        <span className="text-slate-400">
+                          {exp.experience_type || "—"} {exp.theme ? `/ ${exp.theme}` : ""}
+                        </span>
+                        <span className="font-mono text-xs text-slate-500">{exp.slug ?? "—"}</span>
+                        <span className="text-slate-500">{formatDate(exp.updated_at)}</span>
+                        <span className="text-slate-500">{formatDate(exp.expires_at)}</span>
+                      </Link>
                     </td>
-                    <td className="px-6 py-4 text-slate-400 sm:px-8">
-                      {exp.experience_type || "—"} {exp.theme ? `/ ${exp.theme}` : ""}
-                    </td>
-                    <td className="px-6 py-4 font-mono text-xs text-slate-500 sm:px-8">{exp.slug ?? "—"}</td>
-                    <td className="px-6 py-4 text-slate-500 sm:px-8">{formatDate(exp.updated_at)}</td>
-                    <td className="px-6 py-4 text-slate-500 sm:px-8">{formatDate(exp.expires_at)}</td>
                   </tr>
                 ))}
               </tbody>

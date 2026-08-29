@@ -1,20 +1,23 @@
-"""Etapa 9B.4 — 3 endpoints GET-only, administrativos, read-only.
+"""Backend do painel administrativo — Etapa 9B.4 (3 relatórios read-only) +
+listagens (usuários/experiências/pagamentos/logs/configurações) + 3 ações
+de escrita explicitamente autorizadas pelo dono do produto: excluir um
+usuário sem histórico de pagamentos, cancelar localmente um Payment ainda
+ativo, e o detalhe de uma experiência (conteúdo privado, só para
+moderação). Ver o docstring de cada view de escrita para as salvaguardas
+específicas — a regra geral: histórico financeiro (qualquer Payment,
+mesmo terminal) nunca é apagado, e nada aqui chama a Mercado Pago para
+escrever.
 
-Cada view abaixo é uma casca fina em volta de UM Command já existente e já
+Os 3 relatórios são uma casca fina em volta de UM Command já existente e já
 testado (lifecycle_inventory/payment_reconcile/lifecycle_cleanup): valida
 os query params (apps.ops.serializers, tipados e limitados — nunca um nome
 de model/método/função), instancia a MESMA classe Command usada pelo CLI, e
 chama Command.build_report(**kwargs) — o mesmo método que o CLI chama, sem
 nenhuma lógica duplicada.
 
-Não existe nenhum quarto caminho: só estas 3 operações, cada uma com sua
-própria URL fixa (ver urls.py) e sua própria classe de view. Nenhuma delas
-aceita um parâmetro que selecione QUAL função roda — a função é sempre a
-mesma, hardcoded no import no topo deste módulo.
-
-Cada view define só `get()`. DRF (APIView.dispatch) responde 405 Method Not
-Allowed sozinho para POST/PUT/PATCH/DELETE — não há necessidade (nem
-intenção) de tratá-los aqui.
+Nenhuma view aceita um parâmetro que selecione QUAL função roda — a função é
+sempre a mesma, hardcoded no import no topo deste módulo. Toda view exige
+IsAuthenticated + IsProductionAdmin (ver _BaseOpsReportView), sem exceção.
 """
 
 from __future__ import annotations
@@ -23,7 +26,10 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,15 +37,17 @@ from rest_framework.views import APIView
 from apps.accounts.permissions import IsProductionAdmin, is_production_admin
 from apps.experiences.management.commands.lifecycle_cleanup import Command as LifecycleCleanupCommand
 from apps.experiences.management.commands.lifecycle_inventory import Command as LifecycleInventoryCommand
-from apps.experiences.models import ExperienceDraft
-from apps.experiences.storage import r2_is_configured
+from apps.experiences.models import ExperienceDraft, Media
+from apps.experiences.services.draft_deletion import DraftDeletionService, DraftNotDeletable
+from apps.experiences.storage import generate_presigned_read_url, r2_is_configured
 from apps.payments.management.commands.payment_reconcile import Command as PaymentReconcileCommand
 from apps.payments.models import Payment, WebhookEvent
+from apps.payments.services.payment_confirmation_service import PaymentConfirmationService
 
 from .serializers import (
     AdminExperienceListQuerySerializer,
-    AdminListQuerySerializer,
     AdminPaymentListQuerySerializer,
+    AdminUserListQuerySerializer,
     AdminWebhookEventListQuerySerializer,
     LifecycleCleanupPreviewQuerySerializer,
     LifecycleInventoryQuerySerializer,
@@ -52,10 +60,14 @@ User = get_user_model()
 
 
 class _BaseOpsReportView(APIView):
-    """Só GET (nada mais é definido), só admin real — IsAuthenticated vem
-    antes de IsProductionAdmin de propósito, para que um pedido sem token
-    volte 401 (não autenticado) em vez de 403 (autenticado mas sem
-    permissão), mesma distinção HTTP que o resto da API já usa."""
+    """Gate comum de todas as views deste módulo (read-only ou não) — só
+    admin real. IsAuthenticated vem antes de IsProductionAdmin de
+    propósito, para que um pedido sem token volte 401 (não autenticado)
+    em vez de 403 (autenticado mas sem permissão), mesma distinção HTTP
+    que o resto da API já usa. A maioria das subclasses só define `get()`
+    (DRF responde 405 sozinho para o resto); as 2 exceções que escrevem
+    (UserDeleteView, PaymentCancelView) documentam suas próprias
+    salvaguardas."""
 
     permission_classes = [IsAuthenticated, IsProductionAdmin]
 
@@ -148,15 +160,22 @@ class UserListView(_BaseOpsReportView):
     Nunca inclui password/hash — só os campos que o painel administrativo
     precisa para listar contas. is_admin é sempre calculado chamando
     is_production_admin(user) na instância real (nunca uma segunda cópia
-    da regra), exatamente como MeView e IsProductionAdmin já fazem."""
+    da regra), exatamente como MeView e IsProductionAdmin já fazem.
+    Filtro opcional ?email=<texto> (icontains, case-insensitive) — busca
+    de suporte ao cliente, nunca um lookup dinâmico (o campo é sempre
+    email, hardcoded; o valor do cliente é só o texto buscado)."""
 
     def get(self, request):
-        query = AdminListQuerySerializer(data=request.query_params)
+        query = AdminUserListQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
-        limit = query.validated_data["limit"]
-        offset = query.validated_data["offset"]
+        data = query.validated_data
+        limit, offset = data["limit"], data["offset"]
 
         qs = User.objects.all().order_by("-created_at")
+        email_filter = data.get("email")
+        if email_filter:
+            qs = qs.filter(email__icontains=email_filter)
+
         total = qs.count()
         page = list(qs[offset : offset + limit])
 
@@ -207,6 +226,9 @@ class ExperienceListView(_BaseOpsReportView):
         status_filter = data.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
+        owner_email_filter = data.get("owner_email")
+        if owner_email_filter:
+            qs = qs.filter(owner__email__icontains=owner_email_filter)
 
         total = qs.count()
         page = list(qs[offset : offset + limit])
@@ -258,6 +280,9 @@ class PaymentListView(_BaseOpsReportView):
         status_filter = data.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
+        owner_email_filter = data.get("owner_email")
+        if owner_email_filter:
+            qs = qs.filter(owner__email__icontains=owner_email_filter)
 
         total = qs.count()
         page = list(qs[offset : offset + limit])
@@ -362,5 +387,201 @@ class SettingsSnapshotView(_BaseOpsReportView):
                 "pending_media_expiration_minutes": settings.PENDING_MEDIA_EXPIRATION_MINUTES,
                 "memoverse_admin_email": settings.MEMOVERSE_ADMIN_EMAIL or None,
                 "allowed_hosts": list(settings.ALLOWED_HOSTS),
+            }
+        )
+
+
+# ----------------------------------------------------------------------
+# Detalhe de experiência (moderação) e ações de escrita explicitamente
+# autorizadas pelo dono do produto. Ver docstring do módulo para o
+# resumo — cada view abaixo repete suas próprias salvaguardas.
+# ----------------------------------------------------------------------
+
+
+class ExperienceDetailView(_BaseOpsReportView):
+    """GET /api/ops/9b4/experiences/<uuid:draft_id>/
+
+    ÚNICA rota deste módulo que expõe conteúdo privado de uma experiência
+    (título, nomes, carta, fotos/vídeos) — a listagem (ExperienceListView)
+    nunca inclui nada disso. Existe para moderação de conteúdo (checar
+    denúncia/abuso), não para uso rotineiro — por isso cada acesso é
+    logado com o e-mail do admin, em nível WARNING (mais visível que o
+    INFO usado pelas views só de metadados).
+
+    URL de mídia gerada com a MESMA generate_presigned_read_url usada
+    pelo resto do produto (PublicExperienceView etc.) — nunca uma cópia;
+    só para Media com upload_status=UPLOADED (mídia pending/failed não
+    tem objeto para ler no R2)."""
+
+    def get(self, request, draft_id):
+        draft = get_object_or_404(ExperienceDraft.objects.select_related("owner"), pk=draft_id)
+
+        media_items = [
+            {
+                "id": str(media.id),
+                "media_type": media.media_type,
+                "upload_status": media.upload_status,
+                "caption": media.caption,
+                "sort_order": media.sort_order,
+                "url": (
+                    generate_presigned_read_url(media.storage_key)
+                    if media.upload_status == Media.UploadStatus.UPLOADED
+                    else None
+                ),
+            }
+            for media in Media.objects.filter(draft=draft).order_by("media_type", "sort_order", "created_at")
+        ]
+
+        logger.warning("ops.admin_experience_detail_accessed draft_id=%s by=%s", draft_id, request.user.email)
+        return Response(
+            {
+                "id": str(draft.id),
+                "owner_email": draft.owner.email if draft.owner_id else None,
+                "status": draft.status,
+                "slug": draft.slug,
+                "experience_type": draft.experience_type,
+                "theme": draft.theme,
+                "title": draft.title,
+                "recipient_name": draft.recipient_name,
+                "creator_name": draft.creator_name,
+                "event_date": draft.event_date.isoformat() if draft.event_date else None,
+                "letter": draft.letter,
+                "short_message": draft.short_message,
+                "context_answer": draft.context_answer,
+                "created_at": draft.created_at.isoformat(),
+                "updated_at": draft.updated_at.isoformat(),
+                "published_at": draft.published_at.isoformat() if draft.published_at else None,
+                "expires_at": draft.expires_at.isoformat() if draft.expires_at else None,
+                "media": media_items,
+            }
+        )
+
+
+class UserDeleteView(_BaseOpsReportView):
+    """DELETE /api/ops/9b4/users/<uuid:user_id>/
+
+    Salvaguardas, nesta ordem — cada uma um 400/409 explícito, nunca uma
+    exclusão parcial silenciosa:
+
+    1. nunca a própria conta autenticada (evita o admin se auto-bloquear
+       do próprio painel);
+    2. nunca outra conta que também seja admin (is_production_admin) —
+       protege a própria arquitetura de autorização;
+    3. nunca um usuário com QUALQUER Payment, em qualquer status, mesmo
+       terminal — histórico financeiro nunca é apagado neste projeto (ver
+       REGRA DE OURO em apps.experiences.management.commands.
+       lifecycle_cleanup); Payment.owner é on_delete=PROTECT, então mesmo
+       que este check fosse burlado, o Django recusaria com
+       ProtectedError em vez de apagar silenciosamente;
+    4. cada ExperienceDraft do usuário é excluído via
+       DraftDeletionService.delete() — a MESMA lógica que já protege
+       exclusão de draft em qualquer outro lugar do produto (nunca uma
+       segunda cópia): só aceita status=DRAFT sem slug e sem Payment (já
+       garantido pelo passo 3), e limpa o objeto correspondente no R2
+       antes de apagar a linha (best-effort, mesmo contrato do service).
+
+    Tudo dentro de uma transação — se qualquer draft não puder ser
+    excluído (não deveria acontecer, dado o passo 3, mas nunca presumido),
+    a transação inteira é revertida via transaction.set_rollback(True) e
+    nada é excluído."""
+
+    def delete(self, request, user_id):
+        if str(request.user.id) == str(user_id):
+            return Response(
+                {"detail": "Você não pode excluir a própria conta administrativa."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target = get_object_or_404(User, pk=user_id)
+
+        if is_production_admin(target):
+            return Response(
+                {"detail": "Esta conta tem acesso administrativo e não pode ser excluída por aqui."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if Payment.objects.filter(owner=target).exists():
+            return Response(
+                {
+                    "detail": (
+                        "Este usuário tem histórico de pagamentos — nunca excluído automaticamente. "
+                        "Histórico financeiro é preservado mesmo ao excluir a conta."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        target_email = target.email
+
+        with transaction.atomic():
+            try:
+                for draft in list(ExperienceDraft.objects.filter(owner=target)):
+                    DraftDeletionService.delete(draft)
+            except DraftNotDeletable:
+                transaction.set_rollback(True)
+                return Response(
+                    {"detail": "Não foi possível excluir todas as experiências deste usuário."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            target.delete()
+
+        logger.warning("ops.admin_user_delete deleted_email=%s by=%s", target_email, request.user.email)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PaymentCancelView(_BaseOpsReportView):
+    """POST /api/ops/9b4/payments/<uuid:payment_id>/cancel/
+
+    Cancela LOCALMENTE um Payment ainda ativo (pending/in_process/
+    action_required) — NUNCA chama a Mercado Pago para cancelar a Order
+    do lado deles (MercadoPagoClient só tem get_order, leitura; não existe
+    operação de escrita nesta ferramenta). Se o cliente ainda tiver a
+    página de checkout aberta, a Order pode, em teoria, ainda ser paga do
+    lado da Mercado Pago mesmo depois deste cancelamento local — usar para
+    limpar tentativas abandonadas na sua base, nunca como garantia de que
+    a cobrança foi interrompida do lado deles.
+
+    Reaproveita PaymentConfirmationService._mark_draft_payment_failed para
+    a transição do Draft (mesma lógica idempotente/guardada já usada pelo
+    fluxo real de confirmação — nunca uma segunda cópia), e a mesma ordem
+    de lock (Draft antes de Payment) de
+    PaymentConfirmationService._apply_result, para evitar deadlock contra
+    uma confirmação real (webhook) acontecendo ao mesmo tempo."""
+
+    def post(self, request, payment_id):
+        payment = get_object_or_404(Payment, pk=payment_id)
+
+        if payment.status not in Payment.ACTIVE_STATUSES:
+            return Response(
+                {"detail": f"Só pagamentos ativos podem ser cancelados (status atual: {payment.status})."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        with transaction.atomic():
+            draft = ExperienceDraft.objects.select_for_update().get(pk=payment.draft_id)
+            locked_payment = Payment.objects.select_for_update().get(pk=payment.pk)
+
+            if locked_payment.status not in Payment.ACTIVE_STATUSES:
+                return Response(
+                    {
+                        "detail": (
+                            f"Só pagamentos ativos podem ser cancelados "
+                            f"(status atual: {locked_payment.status})."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            locked_payment.status = Payment.Status.CANCELLED
+            locked_payment.save(update_fields=["status", "updated_at"])
+            PaymentConfirmationService._mark_draft_payment_failed(draft)
+
+        logger.warning("ops.admin_payment_cancel payment_id=%s by=%s", payment_id, request.user.email)
+        return Response(
+            {
+                "id": str(locked_payment.id),
+                "status": locked_payment.status,
+                "draft_status": draft.status,
             }
         )

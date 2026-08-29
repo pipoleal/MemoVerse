@@ -41,12 +41,21 @@ class AdminListQuerySerializer(serializers.Serializer):
     offset = serializers.IntegerField(required=False, min_value=0, max_value=MAX_ADMIN_LIST_OFFSET, default=0)
 
 
+class AdminUserListQuerySerializer(AdminListQuerySerializer):
+    # icontains sobre User.email — nunca usado como lookup dinâmico (ver
+    # apps.ops.views.UserListView: sempre email__icontains, hardcoded, o
+    # valor do cliente é só o texto buscado, nunca o nome do campo).
+    email = serializers.CharField(required=False, allow_blank=True, max_length=254)
+
+
 class AdminExperienceListQuerySerializer(AdminListQuerySerializer):
     status = serializers.ChoiceField(choices=ExperienceDraft.Status.choices, required=False)
+    owner_email = serializers.CharField(required=False, allow_blank=True, max_length=254)
 
 
 class AdminPaymentListQuerySerializer(AdminListQuerySerializer):
     status = serializers.ChoiceField(choices=Payment.Status.choices, required=False)
+    owner_email = serializers.CharField(required=False, allow_blank=True, max_length=254)
 
 
 class AdminWebhookEventListQuerySerializer(AdminListQuerySerializer):
