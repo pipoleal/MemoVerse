@@ -107,6 +107,69 @@ class Payment(models.Model):
         return f"{self.draft_id} attempt #{self.attempt_number} ({self.status})"
 
 
+class PlanDiscount(models.Model):
+    """Um preço combinado manualmente no /admin: este e-mail paga `price`
+    (em vez de Plan.price) na próxima vez que comprar `plan`. Criado por um
+    admin (ver apps.ops), consumido automaticamente por
+    CheckoutService._create_attempt.
+
+    Uso único por design: no momento em que vira o preço de um Payment,
+    is_active passa a False e redeemed_at/redeemed_payment são gravados —
+    nunca mais se aplica sozinho a uma segunda compra do mesmo e-mail. Para
+    dar outro desconto ao mesmo e-mail/plano depois, o admin cria uma nova
+    linha (a UniqueConstraint abaixo só proíbe DUAS linhas ativas ao mesmo
+    tempo para o mesmo par email+plan, nunca o histórico de linhas já
+    consumidas)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField()
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name="discounts")
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    note = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    redeemed_at = models.DateTimeField(null=True, blank=True)
+    redeemed_payment = models.ForeignKey(
+        Payment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "payment_plan_discounts"
+        ordering = ["-created_at"]
+        constraints = [
+            # Mesmo padrão de Payment.uniq_active_payment_per_draft: só
+            # bloqueia DUAS linhas ativas simultâneas para o mesmo par
+            # email+plan — linhas já consumidas (is_active=False) nunca
+            # colidem, então o histórico completo de descontos já usados
+            # fica preservado.
+            models.UniqueConstraint(
+                fields=["email", "plan"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_discount_per_email_plan",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["email", "plan", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.email} -> {self.plan.code} @ {self.price}"
+
+
 class WebhookEvent(models.Model):
     """Registro de idempotência das notificações Webhook da Mercado Pago.
 

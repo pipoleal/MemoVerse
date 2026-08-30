@@ -7,7 +7,7 @@ from django.test import TestCase
 
 from apps.experiences.models import ExperienceDraft
 
-from ..models import Payment, Plan
+from ..models import Payment, Plan, PlanDiscount
 
 User = get_user_model()
 
@@ -82,10 +82,7 @@ class CommercialPlansSeedTests(TestCase):
     def test_weekly_plan_values(self):
         plan = Plan.objects.get(code="weekly")
         self.assertEqual(plan.name, "MemoVerse 1 Semana")
-        # TEMPORÁRIO: preço seedado por 0005 é 19.90, mas
-        # 0007_temp_weekly_price_for_checkout_testing reduz para 0.10 para
-        # testes reais de checkout — reverter junto com essa migration.
-        self.assertEqual(plan.price, Decimal("0.10"))
+        self.assertEqual(plan.price, Decimal("19.90"))
         self.assertEqual(plan.currency, "BRL")
         self.assertTrue(plan.is_active)
         self.assertEqual(plan.get_feature("duration_days"), 7)
@@ -109,11 +106,7 @@ class CommercialPlansSeedTests(TestCase):
     def test_lifetime_galaxy_plan_values(self):
         plan = Plan.objects.get(code="lifetime_galaxy")
         self.assertEqual(plan.name, "MemoVerse Vitalício + Galáxia Viva")
-        # TEMPORÁRIO: preço seedado por 0005 é 39.90, mas
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing reduz para
-        # 0.10 para compra real em produção (QA) — reverter junto com essa
-        # migration.
-        self.assertEqual(plan.price, Decimal("0.10"))
+        self.assertEqual(plan.price, Decimal("39.90"))
         self.assertEqual(plan.currency, "BRL")
         self.assertTrue(plan.is_active)
         self.assertIsNone(plan.get_feature("duration_days"))
@@ -245,3 +238,38 @@ class PaymentPlanProtectTests(TestCase):
 
         with self.assertRaises(ProtectedError):
             plan.delete()
+
+
+class PlanDiscountModelTests(TestCase):
+    def test_two_active_discounts_for_the_same_email_and_plan_are_rejected(self):
+        plan = Plan.objects.get(code="weekly")
+        PlanDiscount.objects.create(email="amigo@example.com", plan=plan, price=Decimal("1.00"))
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                PlanDiscount.objects.create(email="amigo@example.com", plan=plan, price=Decimal("2.00"))
+
+    def test_a_redeemed_discount_never_blocks_a_new_one_for_the_same_email_and_plan(self):
+        plan = Plan.objects.get(code="weekly")
+        PlanDiscount.objects.create(email="amigo@example.com", plan=plan, price=Decimal("1.00"), is_active=False)
+
+        # Não levanta — a UniqueConstraint só cobre linhas is_active=True.
+        second = PlanDiscount.objects.create(email="amigo@example.com", plan=plan, price=Decimal("2.00"))
+        self.assertTrue(second.is_active)
+
+    def test_two_active_discounts_for_the_same_email_but_different_plans_are_allowed(self):
+        weekly = Plan.objects.get(code="weekly")
+        lifetime = Plan.objects.get(code="lifetime")
+        PlanDiscount.objects.create(email="amigo@example.com", plan=weekly, price=Decimal("1.00"))
+
+        # Não levanta — planos diferentes, sem colisão na constraint.
+        PlanDiscount.objects.create(email="amigo@example.com", plan=lifetime, price=Decimal("2.00"))
+        self.assertEqual(PlanDiscount.objects.filter(email="amigo@example.com", is_active=True).count(), 2)
+
+    def test_deleting_the_plan_deletes_its_discounts(self):
+        plan = Plan.objects.create(code="temp-plan-discount", name="Temp", price=Decimal("9.99"))
+        discount = PlanDiscount.objects.create(email="amigo@example.com", plan=plan, price=Decimal("1.00"))
+
+        plan.delete()
+
+        self.assertFalse(PlanDiscount.objects.filter(pk=discount.pk).exists())

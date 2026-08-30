@@ -14,7 +14,7 @@ fixa.
 from rest_framework import serializers
 
 from apps.experiences.models import ExperienceDraft
-from apps.payments.models import Payment, WebhookEvent
+from apps.payments.models import Payment, Plan, WebhookEvent
 
 # Mesmo teto pensado para os --limit/--*-limit dos management commands:
 # protege contra um cliente (mesmo autenticado como admin) disparando uma
@@ -60,6 +60,56 @@ class AdminPaymentListQuerySerializer(AdminListQuerySerializer):
 
 class AdminWebhookEventListQuerySerializer(AdminListQuerySerializer):
     status = serializers.ChoiceField(choices=WebhookEvent.Status.choices, required=False)
+
+
+class _OptionalBooleanField(serializers.BooleanField):
+    """serializers.BooleanField comum, mas sem o comportamento especial do
+    DRF para input "estilo HTML form" (e é exatamente isso que um
+    QueryDict de query params é, na visão do DRF): por padrão,
+    BooleanField.default_empty_html = False faz um campo AUSENTE do
+    querystring virar False dentro de validated_data — nunca omitido —
+    tornando impossível distinguir "não filtrei por is_active" de
+    "filtrei por is_active=false" (ambos ficariam com data["is_active"]
+    == False). Aqui default_empty_html = empty restaura o comportamento
+    padrão de qualquer outro campo required=False: ausente do querystring
+    -> ausente de validated_data (SkipField), só True/False quando o
+    cliente realmente envia ?is_active=true|false."""
+
+    default_empty_html = serializers.empty
+
+
+class AdminPlanDiscountListQuerySerializer(AdminListQuerySerializer):
+    email = serializers.CharField(required=False, allow_blank=True, max_length=254)
+    plan_code = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    is_active = _OptionalBooleanField(required=False)
+
+
+class AdminPlanDiscountCreateSerializer(serializers.Serializer):
+    """Cria um PlanDiscount — a única forma de dar um preço combinado a um
+    e-mail específico. price é sempre um valor absoluto em BRL (o que o
+    e-mail vai pagar), nunca um percentual: mais simples de auditar e é
+    literalmente o que o painel pede ("plano mais barato pra esse
+    amigo")."""
+
+    email = serializers.EmailField()
+    plan_code = serializers.CharField(max_length=50)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def validate_email(self, value):
+        # Mesma normalização usada pelo matching em
+        # CheckoutService._create_attempt (email__iexact) — aqui é só
+        # cosmético, para a listagem do painel nunca mostrar o mesmo e-mail
+        # com capitalizações diferentes.
+        return value.strip().lower()
+
+    def validate_plan_code(self, value):
+        # Mesmo padrão de CheckoutRequestSerializer.validate_plan_code —
+        # nunca um plano inativo/inexistente vira desconto.
+        try:
+            return Plan.objects.get(code=value, is_active=True)
+        except Plan.DoesNotExist:
+            raise serializers.ValidationError("Plano inválido ou indisponível.")
 
 
 class LifecycleInventoryQuerySerializer(serializers.Serializer):

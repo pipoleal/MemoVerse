@@ -1,12 +1,13 @@
 """Backend do painel administrativo — Etapa 9B.4 (3 relatórios read-only) +
-listagens (usuários/experiências/pagamentos/logs/configurações) + 3 ações
-de escrita explicitamente autorizadas pelo dono do produto: excluir um
+listagens (usuários/experiências/pagamentos/logs/configurações/descontos) +
+ações de escrita explicitamente autorizadas pelo dono do produto: excluir um
 usuário sem histórico de pagamentos, cancelar localmente um Payment ainda
-ativo, e o detalhe de uma experiência (conteúdo privado, só para
-moderação). Ver o docstring de cada view de escrita para as salvaguardas
-específicas — a regra geral: histórico financeiro (qualquer Payment,
-mesmo terminal) nunca é apagado, e nada aqui chama a Mercado Pago para
-escrever.
+ativo, criar/apagar um PlanDiscount (preço combinado por e-mail+plano, ver
+apps.payments.models.PlanDiscount), e o detalhe de uma experiência (conteúdo
+privado, só para moderação). Ver o docstring de cada view de escrita para as
+salvaguardas específicas — a regra geral: histórico financeiro (qualquer
+Payment, mesmo terminal) nunca é apagado, e nada aqui chama a Mercado Pago
+para escrever.
 
 Os 3 relatórios são uma casca fina em volta de UM Command já existente e já
 testado (lifecycle_inventory/payment_reconcile/lifecycle_cleanup): valida
@@ -26,7 +27,7 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -41,12 +42,14 @@ from apps.experiences.models import ExperienceDraft, Media
 from apps.experiences.services.draft_deletion import DraftDeletionService, DraftNotDeletable
 from apps.experiences.storage import generate_presigned_read_url, r2_is_configured
 from apps.payments.management.commands.payment_reconcile import Command as PaymentReconcileCommand
-from apps.payments.models import Payment, WebhookEvent
+from apps.payments.models import Payment, PlanDiscount, WebhookEvent
 from apps.payments.services.payment_confirmation_service import PaymentConfirmationService
 
 from .serializers import (
     AdminExperienceListQuerySerializer,
     AdminPaymentListQuerySerializer,
+    AdminPlanDiscountCreateSerializer,
+    AdminPlanDiscountListQuerySerializer,
     AdminUserListQuerySerializer,
     AdminWebhookEventListQuerySerializer,
     LifecycleCleanupPreviewQuerySerializer,
@@ -362,6 +365,150 @@ class WebhookEventListView(_BaseOpsReportView):
                 "results": results,
             }
         )
+
+
+class PlanDiscountListView(_BaseOpsReportView):
+    """GET/POST /api/ops/9b4/discounts/
+
+    Alimenta a seção "Descontos" do painel — a forma de dar a um amigo um
+    preço combinado num plano específico. GET lista os PlanDiscount
+    cadastrados (mais recentes primeiro), com filtros opcionais de
+    e-mail/plano/ativo. POST cria um novo: <email> paga <price> na próxima
+    vez que comprar <plan_code> — uso único, ver PlanDiscount.__doc__ e
+    CheckoutService._create_attempt (é lá que o valor é de fato aplicado,
+    nunca aqui — esta view só cadastra a intenção).
+
+    Nunca edita uma linha existente: se já existir um desconto ATIVO para
+    o mesmo par email+plano, a UniqueConstraint do banco rejeita a
+    segunda, traduzido aqui para 409 — apague o antigo (DELETE
+    /discounts/<id>/) antes de cadastrar um novo valor para o mesmo par."""
+
+    def get(self, request):
+        query = AdminPlanDiscountListQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        data = query.validated_data
+        limit, offset = data["limit"], data["offset"]
+
+        qs = PlanDiscount.objects.select_related("plan", "created_by")
+        email_filter = data.get("email")
+        if email_filter:
+            qs = qs.filter(email__icontains=email_filter)
+        plan_code_filter = data.get("plan_code")
+        if plan_code_filter:
+            qs = qs.filter(plan__code=plan_code_filter)
+        if "is_active" in data:
+            qs = qs.filter(is_active=data["is_active"])
+
+        total = qs.count()
+        page = list(qs[offset : offset + limit])
+
+        results = [
+            {
+                "id": str(discount.id),
+                "email": discount.email,
+                "plan_code": discount.plan.code,
+                "price": str(discount.price),
+                "currency": discount.plan.currency,
+                "note": discount.note,
+                "is_active": discount.is_active,
+                "created_by_email": discount.created_by.email if discount.created_by_id else None,
+                "redeemed_at": discount.redeemed_at.isoformat() if discount.redeemed_at else None,
+                "created_at": discount.created_at.isoformat(),
+            }
+            for discount in page
+        ]
+
+        logger.info("ops.admin_discounts_list.accessed")
+        return Response(
+            {
+                "generated_at": timezone.now().isoformat(),
+                "count": total,
+                "limit": limit,
+                "offset": offset,
+                "results": results,
+            }
+        )
+
+    def post(self, request):
+        serializer = AdminPlanDiscountCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            # transaction.atomic() aqui cria um savepoint: sem ele, o
+            # IntegrityError da UniqueConstraint deixaria a transação da
+            # requisição inteira "quebrada" (Postgres/SQLite recusam
+            # qualquer outra query até um ROLLBACK), mesmo já tendo sido
+            # capturado pelo except abaixo — nunca um problema visível em
+            # SQLite fora de testes (cada request tem sua própria conexão
+            # em produção), mas quebra o próximo assert dentro do MESMO
+            # teste (TestCase reaproveita uma única transação/conexão).
+            with transaction.atomic():
+                discount = PlanDiscount.objects.create(
+                    email=data["email"],
+                    plan=data["plan_code"],
+                    price=data["price"],
+                    note=data.get("note", ""),
+                    created_by=request.user,
+                )
+        except IntegrityError:
+            return Response(
+                {
+                    "detail": (
+                        "Já existe um desconto ativo para este e-mail neste plano. "
+                        "Apague-o antes de cadastrar outro valor."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        logger.warning(
+            "ops.admin_discount_create email=%s plan=%s price=%s by=%s",
+            discount.email,
+            discount.plan.code,
+            discount.price,
+            request.user.email,
+        )
+        return Response(
+            {
+                "id": str(discount.id),
+                "email": discount.email,
+                "plan_code": discount.plan.code,
+                "price": str(discount.price),
+                "currency": discount.plan.currency,
+                "note": discount.note,
+                "is_active": discount.is_active,
+                "created_at": discount.created_at.isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PlanDiscountDeleteView(_BaseOpsReportView):
+    """DELETE /api/ops/9b4/discounts/<uuid:discount_id>/
+
+    Apaga um desconto — ativo (o admin mudou de ideia antes de o amigo
+    usar) ou já consumido (limpeza de histórico). Sempre exclusão real:
+    diferente de UserDeleteView (que preserva histórico financeiro por
+    regra do produto), aqui não há PROTECT algum a respeitar —
+    Payment.amount já está congelado independentemente de o PlanDiscount
+    que o originou continuar existindo (Payment.redeemed_payment é a FK
+    de PlanDiscount para Payment, on_delete=SET_NULL; apagar o desconto
+    nunca apaga nem afeta o Payment)."""
+
+    def delete(self, request, discount_id):
+        discount = get_object_or_404(PlanDiscount, pk=discount_id)
+        discount_email = discount.email
+        discount_plan_code = discount.plan.code
+        discount.delete()
+
+        logger.warning(
+            "ops.admin_discount_delete email=%s plan=%s by=%s",
+            discount_email,
+            discount_plan_code,
+            request.user.email,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SettingsSnapshotView(_BaseOpsReportView):

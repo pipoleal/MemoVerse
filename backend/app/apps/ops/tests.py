@@ -31,7 +31,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.experiences.models import ExperienceDraft, Media
-from apps.payments.models import Payment, Plan, WebhookEvent
+from apps.payments.models import Payment, Plan, PlanDiscount, WebhookEvent
 
 User = get_user_model()
 
@@ -86,6 +86,13 @@ def make_payment(*, draft, attempt_number=1, status=Payment.Status.APPROVED, **o
     }
     defaults.update(overrides)
     return Payment.objects.create(**defaults)
+
+
+def make_discount(*, email, plan_code="weekly", price="1.00", **overrides):
+    plan = Plan.objects.get(code=plan_code)
+    defaults = {"email": email, "plan": plan, "price": price}
+    defaults.update(overrides)
+    return PlanDiscount.objects.create(**defaults)
 
 
 def make_media(draft, **overrides):
@@ -481,6 +488,12 @@ ADMIN_LIST_URLS = (
     ADMIN_WEBHOOK_EVENTS_URL,
     ADMIN_SETTINGS_URL,
 )
+# Deliberadamente FORA de ADMIN_LIST_URLS: diferente das 5 rotas acima
+# (só GET), /discounts/ também aceita POST — misturá-la ali quebraria a
+# garantia literal de "...on_all_admin_list_routes" (POST/PUT/PATCH/DELETE
+# rejeitados) em AdminListEndpointsMethodNotAllowedTests. Tem sua própria
+# classe de testes (PlanDiscountListViewTests) abaixo.
+ADMIN_DISCOUNTS_URL = "/api/ops/9b4/discounts/"
 
 
 class AdminListEndpointsAuthenticationTests(TestCase):
@@ -722,6 +735,10 @@ def _payment_cancel_url(payment_id) -> str:
     return f"/api/ops/9b4/payments/{payment_id}/cancel/"
 
 
+def _discount_delete_url(discount_id) -> str:
+    return f"/api/ops/9b4/discounts/{discount_id}/"
+
+
 class ExperienceDetailViewTests(TestCase):
     def setUp(self):
         self.client = auth_client(make_superuser("admin-exp-detail@example.com"))
@@ -936,4 +953,142 @@ class PaymentCancelViewTests(TestCase):
         draft = make_draft(owner, status=ExperienceDraft.Status.AWAITING_PAYMENT)
         payment = make_payment(draft=draft, status=Payment.Status.PENDING)
         response = self.client.get(_payment_cancel_url(payment.id))
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+class PlanDiscountListViewTests(TestCase):
+    """GET/POST /api/ops/9b4/discounts/ — ver apps.ops.views.PlanDiscountListView
+    e apps.payments.models.PlanDiscount."""
+
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-discount@example.com"))
+
+    def test_anonymous_gets_401_on_get_and_post(self):
+        client = APIClient()
+        self.assertEqual(client.get(ADMIN_DISCOUNTS_URL).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(client.post(ADMIN_DISCOUNTS_URL, {}).status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_regular_user_gets_403_on_get_and_post(self):
+        client = auth_client(make_regular_user("actor-discount-403@example.com"))
+        self.assertEqual(client.get(ADMIN_DISCOUNTS_URL).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(client.post(ADMIN_DISCOUNTS_URL, {}).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_creates_a_discount_for_an_email_and_plan(self):
+        response = self.client.post(
+            ADMIN_DISCOUNTS_URL,
+            {"email": "Amigo@Example.com", "plan_code": "lifetime_galaxy", "price": "9.90", "note": "amigo do insta"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        body = response.json()
+        # E-mail normalizado para minúsculo — ver
+        # AdminPlanDiscountCreateSerializer.validate_email.
+        self.assertEqual(body["email"], "amigo@example.com")
+        self.assertEqual(body["plan_code"], "lifetime_galaxy")
+        self.assertEqual(body["price"], "9.90")
+        self.assertTrue(body["is_active"])
+
+        discount = PlanDiscount.objects.get(pk=body["id"])
+        self.assertEqual(discount.created_by_id, User.objects.get(email="admin-discount@example.com").id)
+
+    def test_invalid_or_inactive_plan_code_is_rejected(self):
+        Plan.objects.create(code="inactive-for-discount", name="Inativo", price="9.99", is_active=False)
+        response = self.client.post(
+            ADMIN_DISCOUNTS_URL,
+            {"email": "amigo2@example.com", "plan_code": "inactive-for-discount", "price": "1.00"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_negative_price_is_rejected(self):
+        response = self.client.post(
+            ADMIN_DISCOUNTS_URL,
+            {"email": "amigo3@example.com", "plan_code": "weekly", "price": "-1.00"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_second_active_discount_for_same_email_and_plan_is_rejected_with_409(self):
+        make_discount(email="amigo4@example.com", plan_code="weekly", price="1.00")
+        response = self.client.post(
+            ADMIN_DISCOUNTS_URL,
+            {"email": "amigo4@example.com", "plan_code": "weekly", "price": "2.00"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(PlanDiscount.objects.filter(email="amigo4@example.com", plan__code="weekly").count(), 1)
+
+    def test_a_new_discount_is_allowed_once_the_previous_one_is_no_longer_active(self):
+        make_discount(email="amigo5@example.com", plan_code="weekly", price="1.00", is_active=False)
+        response = self.client.post(
+            ADMIN_DISCOUNTS_URL,
+            {"email": "amigo5@example.com", "plan_code": "weekly", "price": "2.00"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_lists_discounts_most_recent_first(self):
+        make_discount(email="older@example.com", plan_code="weekly", price="1.00")
+        response = self.client.post(
+            ADMIN_DISCOUNTS_URL,
+            {"email": "newer@example.com", "plan_code": "lifetime", "price": "2.00"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        list_response = self.client.get(ADMIN_DISCOUNTS_URL)
+        emails_in_order = [row["email"] for row in list_response.json()["results"]]
+        self.assertEqual(emails_in_order[:2], ["newer@example.com", "older@example.com"])
+
+    def test_email_filter_is_case_insensitive_partial_match(self):
+        make_discount(email="suporte-alvo@example.com", plan_code="weekly", price="1.00")
+        make_discount(email="outra-pessoa@example.com", plan_code="weekly", price="1.00")
+        response = self.client.get(ADMIN_DISCOUNTS_URL, {"email": "SUPORTE-alvo"})
+        emails = {row["email"] for row in response.json()["results"]}
+        self.assertIn("suporte-alvo@example.com", emails)
+        self.assertNotIn("outra-pessoa@example.com", emails)
+
+    def test_is_active_filter(self):
+        make_discount(email="ativo@example.com", plan_code="weekly", price="1.00", is_active=True)
+        make_discount(email="usado@example.com", plan_code="lifetime", price="1.00", is_active=False)
+        response = self.client.get(ADMIN_DISCOUNTS_URL, {"is_active": "false"})
+        emails = {row["email"] for row in response.json()["results"]}
+        self.assertIn("usado@example.com", emails)
+        self.assertNotIn("ativo@example.com", emails)
+
+    def test_put_patch_are_not_allowed(self):
+        for method in ("put", "patch"):
+            with assert_no_writes():
+                response = getattr(self.client, method)(ADMIN_DISCOUNTS_URL, data={})
+            self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+class PlanDiscountDeleteViewTests(TestCase):
+    def setUp(self):
+        self.client = auth_client(make_superuser("admin-discount-del@example.com"))
+
+    def test_anonymous_gets_401(self):
+        discount = make_discount(email="target-401@example.com")
+        response = APIClient().delete(_discount_delete_url(discount.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_regular_user_gets_403(self):
+        discount = make_discount(email="target-403@example.com")
+        client = auth_client(make_regular_user("actor-403-del@example.com"))
+        response = client.delete(_discount_delete_url(discount.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_deletes_an_active_discount(self):
+        discount = make_discount(email="delete-me@example.com")
+        response = self.client.delete(_discount_delete_url(discount.id))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(PlanDiscount.objects.filter(pk=discount.id).exists())
+
+    def test_deletes_an_already_redeemed_discount(self):
+        discount = make_discount(email="already-used@example.com", is_active=False)
+        response = self.client.delete(_discount_delete_url(discount.id))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(PlanDiscount.objects.filter(pk=discount.id).exists())
+
+    def test_nonexistent_discount_returns_404(self):
+        response = self.client.delete(_discount_delete_url(uuid.uuid4()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_get_is_not_allowed_on_discount_delete_route(self):
+        discount = make_discount(email="method-check@example.com")
+        response = self.client.get(_discount_delete_url(discount.id))
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)

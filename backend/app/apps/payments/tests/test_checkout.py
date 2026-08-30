@@ -12,7 +12,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.experiences.models import ExperienceDraft
 
-from ..models import Payment, Plan
+from ..models import Payment, Plan, PlanDiscount
 from ..services.checkout_service import CheckoutService, DraftAlreadyPaid, DraftNotFound, _payer_email_for
 from ..services.mercadopago_client import (
     MercadoPagoConfigurationError,
@@ -134,34 +134,28 @@ class CheckoutPlanResolutionTests(TestCase):
         self.client = auth_client(self.user)
 
     def test_weekly_plan_creates_payment_of_1990(self):
-        # TEMPORÁRIO: preço original 19.90, reduzido para 0.10 por
-        # 0007_temp_weekly_price_for_checkout_testing (testes reais de
-        # checkout) — reverter junto com essa migration.
         with patch_mp_client():
             self.client.post(checkout_url(self.draft.id), {"plan_code": "weekly"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("19.90"))
 
     def test_lifetime_galaxy_plan_creates_payment_of_3990(self):
-        # TEMPORÁRIO: preço original 39.90, reduzido para 0.10 por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing (compra real
-        # em produção para QA) — reverter junto com essa migration.
         with patch_mp_client():
             self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_amount_sent_by_client_is_ignored(self):
         with patch_mp_client():
             self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy", "amount": "0.01"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_price_sent_by_client_is_ignored(self):
         with patch_mp_client():
             self.client.post(checkout_url(self.draft.id), {"plan_code": "lifetime_galaxy", "price": "0.01"})
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_currency_sent_by_client_is_ignored(self):
         with patch_mp_client():
@@ -225,6 +219,101 @@ class CheckoutPlanResolutionTests(TestCase):
         self.assertFalse(Payment.objects.filter(draft=self.draft).exists())
 
 
+class CheckoutPlanDiscountTests(TestCase):
+    """Um PlanDiscount ativo (criado no /admin — ver apps.ops.views.
+    PlanDiscountListView) para o e-mail do dono do draft + o plano escolhido
+    vira o Payment.amount desta tentativa, e é consumido (is_active=False)
+    no processo — ver CheckoutService._create_attempt."""
+
+    def test_active_discount_overrides_the_plan_price(self):
+        user = make_user("amigo@example.com")
+        draft = make_draft(user)
+        PlanDiscount.objects.create(
+            email="amigo@example.com", plan=Plan.objects.get(code="lifetime_galaxy"), price=Decimal("9.90")
+        )
+
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("9.90"))
+
+    def test_discount_is_single_use(self):
+        user = make_user("amigo2@example.com")
+        discount = PlanDiscount.objects.create(
+            email="amigo2@example.com", plan=Plan.objects.get(code="weekly"), price=Decimal("1.00")
+        )
+
+        draft1 = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft1.id), {"plan_code": "weekly"})
+        payment1 = Payment.objects.get(draft=draft1)
+        self.assertEqual(payment1.amount, Decimal("1.00"))
+
+        discount.refresh_from_db()
+        self.assertFalse(discount.is_active)
+        self.assertIsNotNone(discount.redeemed_at)
+        self.assertEqual(discount.redeemed_payment_id, payment1.id)
+
+        # Segunda compra do mesmo e-mail para o mesmo plano: o desconto já
+        # foi consumido, então paga o preço normal do plano. order_id/
+        # payment_id diferentes do primeiro mock — Payment.mp_order_id e
+        # mp_payment_id são unique, então reaproveitar os mesmos valores do
+        # primeiro checkout colidiria com a constraint do banco.
+        draft2 = make_draft(user)
+        with patch_mp_client(order_id="ORD02TEST", payment_id="PAY02TEST"):
+            auth_client(user).post(checkout_url(draft2.id), {"plan_code": "weekly"})
+        payment2 = Payment.objects.get(draft=draft2)
+        self.assertEqual(payment2.amount, Decimal("19.90"))
+
+    def test_discount_only_applies_to_the_matching_plan(self):
+        user = make_user("amigo3@example.com")
+        PlanDiscount.objects.create(
+            email="amigo3@example.com", plan=Plan.objects.get(code="weekly"), price=Decimal("1.00")
+        )
+        draft = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("39.90"))
+
+    def test_discount_only_applies_to_the_matching_email(self):
+        make_user("has-discount@example.com")
+        other_user = make_user("no-discount@example.com")
+        PlanDiscount.objects.create(
+            email="has-discount@example.com", plan=Plan.objects.get(code="weekly"), price=Decimal("1.00")
+        )
+        draft = make_draft(other_user)
+        with patch_mp_client():
+            auth_client(other_user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("19.90"))
+
+    def test_email_match_is_case_insensitive(self):
+        user = make_user("Amigo4@Example.com")
+        PlanDiscount.objects.create(
+            email="amigo4@example.com", plan=Plan.objects.get(code="weekly"), price=Decimal("1.00")
+        )
+        draft = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("1.00"))
+
+    def test_inactive_discount_never_applies(self):
+        user = make_user("amigo5@example.com")
+        PlanDiscount.objects.create(
+            email="amigo5@example.com",
+            plan=Plan.objects.get(code="weekly"),
+            price=Decimal("1.00"),
+            is_active=False,
+        )
+        draft = make_draft(user)
+        with patch_mp_client():
+            auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
+        payment = Payment.objects.get(draft=draft)
+        self.assertEqual(payment.amount, Decimal("19.90"))
+
+
 class CheckoutRealPriceRegardlessOfEmailTests(TestCase):
     """Etapa 5 — Fase C: o bypass temporário de R$1,00
     (CheckoutService._TEMP_R1_TEST_OWNER_EMAIL) foi removido. Estes testes
@@ -234,15 +323,12 @@ class CheckoutRealPriceRegardlessOfEmailTests(TestCase):
     FORMER_OVERRIDE_EMAIL = "felipeleal12345678910@gmail.com"
 
     def test_former_override_email_now_pays_the_real_plan_price(self):
-        # TEMPORÁRIO: preço original 39.90, reduzido por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing — reverter
-        # junto com essa migration.
         user = make_user(self.FORMER_OVERRIDE_EMAIL)
         draft = make_draft(user)
         with patch_mp_client():
             auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get(draft=draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_any_other_account_pays_the_real_plan_price(self):
         other_user = make_user("nao-e-a-conta-de-teste@example.com")
@@ -250,7 +336,7 @@ class CheckoutRealPriceRegardlessOfEmailTests(TestCase):
         with patch_mp_client():
             auth_client(other_user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get(draft=draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
     def test_client_cannot_spoof_a_special_price_via_request_body(self):
         # draft.owner.email vem sempre do usuário autenticado dono do draft
@@ -284,10 +370,8 @@ class CheckoutResponsePlanDetailsTests(TestCase):
         with patch_mp_client():
             response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "weekly"})
         # DecimalField serializa como string por padrão no DRF — o contrato
-        # da API é "0.10", não 0.10. TEMPORÁRIO: preço original 19.90,
-        # reduzido por 0007_temp_weekly_price_for_checkout_testing — reverter
-        # junto com essa migration.
-        self.assertEqual(response.data["plan"]["price"], "0.10")
+        # da API é "19.90", não 19.9.
+        self.assertEqual(response.data["plan"]["price"], "19.90")
         self.assertEqual(response.data["plan"]["currency"], "BRL")
         features = response.data["plan"]["features"]
         self.assertEqual(features["duration_days"], 7)
@@ -306,14 +390,11 @@ class CheckoutResponsePlanDetailsTests(TestCase):
         )
 
     def test_response_includes_galaxy_live_enabled_true_for_lifetime_galaxy(self):
-        # TEMPORÁRIO: preço original 39.90, reduzido por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing — reverter
-        # junto com essa migration.
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
             response = auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
-        self.assertEqual(response.data["plan"]["price"], "0.10")
+        self.assertEqual(response.data["plan"]["price"], "39.90")
         self.assertIs(response.data["plan"]["features"]["galaxy_live_enabled"], True)
 
     def test_response_price_is_unaffected_by_a_later_plan_price_change(self):
@@ -345,24 +426,19 @@ class CheckoutPaymentLinkageTests(TestCase):
         self.assertEqual(payment.owner_id, user.id)
 
     def test_payment_amount_is_frozen_after_plan_price_changes(self):
-        # TEMPORÁRIO: preço original 39.90, reduzido por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing — reverter
-        # junto com essa migration. O teste em si (preço muda depois, o
-        # Payment já criado não muda) continua válido para qualquer valor
-        # inicial.
         user = make_user()
         draft = make_draft(user)
         with patch_mp_client():
             auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
         payment = Payment.objects.get()
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
         plan = Plan.objects.get(code="lifetime_galaxy")
         plan.price = Decimal("99.99")
         plan.save(update_fields=["price"])
 
         payment.refresh_from_db()
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
 
 
 class CheckoutAttemptNumberTests(TestCase):
@@ -591,16 +667,13 @@ class CheckoutMercadoPagoClientCallTests(TestCase):
         user = make_user()
         draft = make_draft(user)
 
-        # TEMPORÁRIO: preço original 39.90, reduzido por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing — reverter
-        # junto com essa migration.
         with patch_mp_client() as mock_cls:
             auth_client(user).post(checkout_url(draft.id), {"plan_code": "lifetime_galaxy"})
 
         payment = Payment.objects.get(draft=draft)
         mock_cls.return_value.create_order.assert_called_once()
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
-        self.assertEqual(call_kwargs["amount"], Decimal("0.10"))
+        self.assertEqual(call_kwargs["amount"], Decimal("39.90"))
         self.assertEqual(call_kwargs["external_reference"], payment.external_reference)
         self.assertEqual(call_kwargs["idempotency_key"], payment.idempotency_key)
         self.assertEqual(call_kwargs["payer"], {"email": user.email})
@@ -913,18 +986,15 @@ class CheckoutCardPayloadTests(TestCase):
         # Item F: mesmo que o frontend mande transaction_amount (só para o
         # Brick), o backend continua sendo a única autoridade sobre o preço —
         # esse campo nem é declarado no serializer, então é descartado.
-        # TEMPORÁRIO: preço original 39.90, reduzido por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing — reverter
-        # junto com essa migration.
         with patch_mp_client_for_card() as mock_cls:
             self.client.post(
                 checkout_url(self.draft.id),
                 card_payload(plan_code="lifetime_galaxy", transaction_amount="0.01"),
             )
         payment = Payment.objects.get(draft=self.draft)
-        self.assertEqual(payment.amount, Decimal("0.10"))
+        self.assertEqual(payment.amount, Decimal("39.90"))
         call_kwargs = mock_cls.return_value.create_order.call_args.kwargs
-        self.assertEqual(call_kwargs["payments"][0]["amount"], "0.10")
+        self.assertEqual(call_kwargs["payments"][0]["amount"], "39.90")
 
     def test_card_number_or_cvv_like_fields_are_never_accepted(self):
         # O serializer não declara esses campos — mesmo se enviados, o DRF

@@ -51,8 +51,8 @@ class PlanSummarySerializer(serializers.Serializer):
     """price/currency aqui vêm sempre de Payment.amount/Payment.currency
     (congelados na criação da tentativa — ver CheckoutService._create_attempt),
     nunca de Plan.price diretamente: é o valor que será (ou foi) realmente
-    cobrado, o que também cobre corretamente o override temporário de R$1
-    da conta de teste (ver checkout_service.py)."""
+    cobrado, o que também cobre corretamente um PlanDiscount ativo para o
+    e-mail do dono do draft (ver checkout_service.py)."""
 
     code = serializers.CharField()
     name = serializers.CharField()

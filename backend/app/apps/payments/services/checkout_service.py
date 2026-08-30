@@ -28,10 +28,11 @@ import logging
 
 from django.db import IntegrityError, transaction
 from django.db.models import Max
+from django.utils import timezone
 
 from apps.experiences.models import ExperienceDraft
 
-from ..models import Payment, Plan
+from ..models import Payment, Plan, PlanDiscount
 from .mercadopago_client import MercadoPagoClient, MercadoPagoClientError
 from .payment_confirmation_service import PaymentConfirmationError, PaymentConfirmationService
 
@@ -227,10 +228,24 @@ class CheckoutService:
             Payment.objects.filter(draft=draft).aggregate(last=Max("attempt_number"))["last"] or 0
         ) + 1
 
-        # Congelado a partir de Plan.price/currency agora. A partir daqui
+        # select_for_update trava a linha do desconto (se existir) dentro da
+        # mesma transação/lock do draft já em vigor aqui (ver
+        # _get_or_create_active_payment) — evita que duas tentativas de
+        # checkout concorrentes para o mesmo e-mail+plano consumam o mesmo
+        # PlanDiscount duas vezes. email__iexact porque
+        # UserManager.normalize_email só normaliza o domínio, nunca a parte
+        # local do e-mail.
+        discount = (
+            PlanDiscount.objects.select_for_update()
+            .filter(email__iexact=draft.owner.email, plan=plan, is_active=True)
+            .first()
+        )
+
+        # Congelado a partir de Plan.price/currency (ou do PlanDiscount, se
+        # houver um ativo para este e-mail+plano) agora. A partir daqui
         # Payment.amount é a fonte histórica deste pagamento — nunca
-        # recalculado a partir do preço atual do Plan.
-        amount = plan.price
+        # recalculado a partir do preço atual do Plan/desconto.
+        amount = discount.price if discount is not None else plan.price
 
         payment = Payment.objects.create(
             draft=draft,
@@ -248,6 +263,17 @@ class CheckoutService:
             # em ~41-42 chars (draft.id sozinho já ocupa 36), com folga.
             idempotency_key=f"mv:{draft.id}:{next_attempt}",
         )
+
+        if discount is not None:
+            # Uso único: consumido no instante em que vira o preço de um
+            # Payment de verdade — nunca reaproveitado numa segunda compra,
+            # mesmo que esta tentativa nunca chegue a ser paga (o Payment
+            # cancelado/expirado/rejeitado não devolve o desconto sozinho;
+            # é o admin que decide criar um novo se quiser dar de novo).
+            discount.is_active = False
+            discount.redeemed_at = timezone.now()
+            discount.redeemed_payment = payment
+            discount.save(update_fields=["is_active", "redeemed_at", "redeemed_payment", "updated_at"])
 
         # Etapa 9B.3: esta transição precisa ser atômica com a criação do
         # Payment (mesma transação/lock de _get_or_create_active_payment —

@@ -66,6 +66,7 @@ export default function AdminSidebar({ mobileOpen, onClose }: AdminSidebarProps)
             active={pathname === "/admin/experiences"}
           />
           <SidebarLink href="/admin/payments" icon="💳" label="Pagamentos" active={pathname === "/admin/payments"} />
+          <SidebarLink href="/admin/discounts" icon="🎁" label="Descontos" active={pathname === "/admin/discounts"} />
           <SidebarLink href="/admin/lifecycle" icon="♻️" label="Lifecycle" active={pathname === "/admin/lifecycle"} />
           <SidebarLink href="/admin/logs" icon="📜" label="Logs" active={pathname === "/admin/logs"} />
           <SidebarLink

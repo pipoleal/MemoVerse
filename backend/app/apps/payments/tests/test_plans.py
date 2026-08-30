@@ -35,28 +35,17 @@ class PlanListViewTests(TestCase):
         self.assertNotIn("inactive-plan", codes)
 
     def test_results_are_ordered_by_price_ascending(self):
-        # TEMPORÁRIO: com 0007 (weekly) e 0008 (lifetime_galaxy) reduzindo
-        # os dois pra 0.10, o preço empata entre eles — Plan.Meta.ordering
-        # = ["price"] não tem critério de desempate, então a ordem relativa
-        # entre "weekly" e "lifetime_galaxy" passa a ser a de inserção (ver
-        # NEW_PLANS em 0005_seed_commercial_plans), não mais alfabética/de
-        # preço "puro". "lifetime" (29.90, sem redução) continua por
-        # último, unicamente. Reverter as duas migrations restaura o valor
-        # original deste teste: ["weekly", "lifetime", "lifetime_galaxy"].
         response = self.client.get(PLANS_URL)
         codes_in_order = [item["code"] for item in response.data]
-        self.assertEqual(codes_in_order, ["weekly", "lifetime_galaxy", "lifetime"])
+        self.assertEqual(codes_in_order, ["weekly", "lifetime", "lifetime_galaxy"])
 
     def test_weekly_plan_shape_and_values(self):
         response = self.client.get(PLANS_URL)
         weekly = next(item for item in response.data if item["code"] == "weekly")
         self.assertEqual(weekly["name"], "MemoVerse 1 Semana")
         # DecimalField serializa como string por padrão no DRF (evita
-        # arredondamento de float) — o contrato da API é "0.10", não 0.10.
-        # TEMPORÁRIO: preço original 19.90, reduzido por
-        # 0007_temp_weekly_price_for_checkout_testing para testes reais de
-        # checkout — reverter junto com essa migration.
-        self.assertEqual(weekly["price"], "0.10")
+        # arredondamento de float) — o contrato da API é "19.90", não 19.9.
+        self.assertEqual(weekly["price"], "19.90")
         self.assertEqual(weekly["currency"], "BRL")
         self.assertEqual(weekly["features"]["duration_days"], 7)
         self.assertIs(weekly["features"]["is_lifetime"], False)
@@ -96,10 +85,7 @@ class PlanListViewTests(TestCase):
         response = self.client.get(PLANS_URL)
         lifetime_galaxy = next(item for item in response.data if item["code"] == "lifetime_galaxy")
         self.assertEqual(lifetime_galaxy["name"], "MemoVerse Vitalício + Galáxia Viva")
-        # TEMPORÁRIO: preço original 39.90, reduzido por
-        # 0008_temp_lifetime_galaxy_price_for_checkout_testing para compra
-        # real em produção (QA) — reverter junto com essa migration.
-        self.assertEqual(lifetime_galaxy["price"], "0.10")
+        self.assertEqual(lifetime_galaxy["price"], "39.90")
         self.assertIs(lifetime_galaxy["features"]["is_lifetime"], True)
         self.assertIs(lifetime_galaxy["features"]["galaxy_live_enabled"], True)
         self.assertEqual(
