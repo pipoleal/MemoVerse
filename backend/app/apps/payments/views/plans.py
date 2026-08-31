@@ -16,7 +16,7 @@ class PlanListView(APIView):
     qualquer chamada autenticada acontecer.
 
     is_active=True é o único filtro — Plan.Meta.ordering já é ["price"],
-    então a resposta já sai ordenada (weekly, lifetime, lifetime_galaxy)
+    então a resposta já sai ordenada (daily, weekly, lifetime, lifetime_galaxy)
     sem precisar de order_by() explícito aqui.
     """
 

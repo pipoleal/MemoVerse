@@ -623,14 +623,18 @@ class PublicationServiceExpiresAtTests(TestCase):
         self.assertIsNotNone(published.expires_at)
         self.assertEqual(published.expires_at, published.published_at + timedelta(days=7))
 
-    def test_lifetime_plan_never_expires(self):
+    def test_lifetime_plan_expires_one_year_after_publication(self):
+        # "lifetime" é só o code (slug interno) — o plano em si agora é
+        # anual, não vitalício. Só lifetime_galaxy (o premium) continua
+        # vitalício de verdade, ver test_lifetime_galaxy_plan_never_expires.
         user = make_user()
         draft = make_draft(user, status=ExperienceDraft.Status.PAID)
         make_payment(draft=draft, plan=Plan.objects.get(code="lifetime"), status=Payment.Status.APPROVED)
 
         published = PublicationService.publish(draft)
 
-        self.assertIsNone(published.expires_at)
+        self.assertIsNotNone(published.expires_at)
+        self.assertEqual(published.expires_at, published.published_at + timedelta(days=365))
 
     def test_lifetime_galaxy_plan_never_expires(self):
         user = make_user()

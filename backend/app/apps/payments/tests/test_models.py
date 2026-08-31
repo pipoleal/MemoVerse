@@ -92,15 +92,30 @@ class CommercialPlansSeedTests(TestCase):
         self.assertEqual(len(plan.get_feature("highlights")), 6)
 
     def test_lifetime_plan_values(self):
+        # "lifetime" é só o code (slug interno, preservado por compatibilidade
+        # com Payment.plan) — o plano em si agora é anual, não vitalício. Só
+        # lifetime_galaxy (o premium) continua vitalício de verdade.
         plan = Plan.objects.get(code="lifetime")
-        self.assertEqual(plan.name, "MemoVerse Vitalício")
+        self.assertEqual(plan.name, "MemoVerse Anual")
         self.assertEqual(plan.price, Decimal("29.90"))
         self.assertEqual(plan.currency, "BRL")
         self.assertTrue(plan.is_active)
-        self.assertIsNone(plan.get_feature("duration_days"))
-        self.assertIs(plan.get_feature("is_lifetime"), True)
+        self.assertEqual(plan.get_feature("duration_days"), 365)
+        self.assertIs(plan.get_feature("is_lifetime"), False)
         self.assertIs(plan.get_feature("galaxy_live_enabled"), False)
-        self.assertEqual(plan.get_feature("highlights")[-1], "Disponível para sempre")
+        self.assertEqual(plan.get_feature("highlights")[-1], "Disponível por 1 ano")
+        self.assertEqual(len(plan.get_feature("highlights")), 6)
+
+    def test_daily_plan_values(self):
+        plan = Plan.objects.get(code="daily")
+        self.assertEqual(plan.name, "MemoVerse 1 Dia")
+        self.assertEqual(plan.price, Decimal("9.90"))
+        self.assertEqual(plan.currency, "BRL")
+        self.assertTrue(plan.is_active)
+        self.assertEqual(plan.get_feature("duration_days"), 1)
+        self.assertIs(plan.get_feature("is_lifetime"), False)
+        self.assertIs(plan.get_feature("galaxy_live_enabled"), False)
+        self.assertEqual(plan.get_feature("highlights")[-1], "Disponível por 1 dia")
         self.assertEqual(len(plan.get_feature("highlights")), 6)
 
     def test_lifetime_galaxy_plan_values(self):
@@ -117,9 +132,9 @@ class CommercialPlansSeedTests(TestCase):
         )
         self.assertEqual(len(plan.get_feature("highlights")), 8)
 
-    def test_only_the_three_commercial_plans_are_active(self):
+    def test_only_the_four_commercial_plans_are_active(self):
         active_codes = set(Plan.objects.filter(is_active=True).values_list("code", flat=True))
-        self.assertEqual(active_codes, {"weekly", "lifetime", "lifetime_galaxy"})
+        self.assertEqual(active_codes, {"daily", "weekly", "lifetime", "lifetime_galaxy"})
 
 
 class PlanTests(TestCase):

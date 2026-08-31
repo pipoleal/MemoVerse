@@ -41,30 +41,14 @@ export function formatPlanPrice(price: string, currency: string = "BRL"): string
   return Number(price).toLocaleString("pt-BR", { style: "currency", currency });
 }
 
-// Comunicação comercial: "Vitalício" virou "Anual" só na apresentação.
-// Plan.name (banco, seedado em
-// payments/migrations/0005_seed_commercial_plans.py) e
-// duration_days/is_lifetime/preço (ver
-// experiences/services/publication_service.py) continuam exatamente como
-// estão — nenhuma lógica de cobrança/duração é tocada aqui, só o texto
-// exibido onde o nome do plano aparece (checkout, landing page).
-export function displayPlanName(name: string): string {
-  return name.replace(/Vitalício/gi, "Anual");
-}
-
-// "Disponível para sempre" (um dos highlights vindos do banco, ver
-// payments/migrations/0006_add_plan_highlights.py) contradiria um plano
-// agora chamado "Anual" na tela — mesmo tipo de substituição só de
-// apresentação, nunca alterando o array que vem da API.
-export function displayPlanHighlight(highlight: string): string {
-  return highlight.replace(/Dispon[ií]vel para sempre/gi, "Disponível por 1 ano");
-}
-
 // "MemoVerse 1 Semana" -> "1 SEMANA" — um transform ao vivo do nome real do
 // plano vindo da API, nunca um título hardcoded por plan_code (que poderia
-// silenciosamente divergir de Plan.name no backend).
+// silenciosamente divergir de Plan.name no backend). Só o plano premium
+// (lifetime_galaxy) é genuinamente vitalício agora — o plano "lifetime" virou
+// anual de verdade (payments/migrations/0012_lifetime_plan_becomes_annual.py)
+// — então Plan.name já é o texto final a exibir, sem tradução de apresentação.
 export function planCardTitle(name: string): string {
-  return displayPlanName(name).replace(/^MemoVerse\s+/i, "").toUpperCase();
+  return name.replace(/^MemoVerse\s+/i, "").toUpperCase();
 }
 
 // Exactly the keys apps/payments/views/checkout.py::_checkout_payload_for

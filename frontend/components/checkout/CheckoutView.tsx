@@ -6,8 +6,6 @@ import CardPaymentBlock from "./CardPaymentBlock";
 import ThemeVisual from "@/components/dashboard/ThemeVisual";
 import {
   createOrResumeCheckout,
-  displayPlanHighlight,
-  displayPlanName,
   extractCheckoutErrorMessage,
   fetchActivePlans,
   fetchDraftPaymentStatus,
@@ -46,10 +44,10 @@ type Phase =
   | { kind: "payment_failed"; status: PaymentStatus; checkout: CheckoutResponse | null; planCode: string }
   | { kind: "error"; message: string };
 
-// displayPlanName/displayPlanHighlight/planCardTitle agora vivem em
-// @/lib/checkout — a landing page (PricingPreview.tsx) precisa exatamente
-// da mesma transformação de apresentação, e frontend/CLAUDE.md pede para
-// nunca duplicar lógica existente entre componentes.
+// planCardTitle agora vive em @/lib/checkout — a landing page
+// (PricingPreview.tsx) precisa exatamente da mesma transformação, e
+// frontend/CLAUDE.md pede para nunca duplicar lógica existente entre
+// componentes.
 
 // Reused wherever the currently-selected/checked-out plan needs to be
 // summarized — never re-derived or hardcoded a second time.
@@ -359,7 +357,7 @@ function PlanSummaryBlock({ plan }: { plan: Plan | null }) {
   return (
     <div>
       <p className="text-sm uppercase tracking-widest text-slate-400">Plano</p>
-      <p className="mt-1 text-xl font-bold text-white">{displayPlanName(plan.name)}</p>
+      <p className="mt-1 text-xl font-bold text-white">{plan.name}</p>
       <p className="mt-4 text-sm uppercase tracking-widest text-slate-400">Total</p>
       <p className="text-2xl font-bold text-yellow-400">{formatPlanPrice(plan.price, plan.currency)}</p>
     </div>
@@ -398,7 +396,7 @@ function PlanCard({ plan, onSelect }: { plan: Plan; onSelect: () => void }) {
         {plan.features.highlights.map((item) => (
           <li key={item} className="flex items-start gap-2">
             <span className="mt-0.5 text-yellow-400">✓</span>
-            {displayPlanHighlight(item)}
+            {item}
           </li>
         ))}
       </ul>

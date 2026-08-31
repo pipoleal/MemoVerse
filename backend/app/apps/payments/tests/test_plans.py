@@ -17,10 +17,10 @@ class PlanListViewTests(TestCase):
         response = APIClient().get(PLANS_URL)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_returns_only_the_three_active_commercial_plans(self):
+    def test_returns_only_the_four_active_commercial_plans(self):
         response = self.client.get(PLANS_URL)
         codes = {item["code"] for item in response.data}
-        self.assertEqual(codes, {"weekly", "lifetime", "lifetime_galaxy"})
+        self.assertEqual(codes, {"daily", "weekly", "lifetime", "lifetime_galaxy"})
 
     def test_essential_and_stellar_never_appear(self):
         response = self.client.get(PLANS_URL)
@@ -37,7 +37,28 @@ class PlanListViewTests(TestCase):
     def test_results_are_ordered_by_price_ascending(self):
         response = self.client.get(PLANS_URL)
         codes_in_order = [item["code"] for item in response.data]
-        self.assertEqual(codes_in_order, ["weekly", "lifetime", "lifetime_galaxy"])
+        self.assertEqual(codes_in_order, ["daily", "weekly", "lifetime", "lifetime_galaxy"])
+
+    def test_daily_plan_shape_and_values(self):
+        response = self.client.get(PLANS_URL)
+        daily = next(item for item in response.data if item["code"] == "daily")
+        self.assertEqual(daily["name"], "MemoVerse 1 Dia")
+        self.assertEqual(daily["price"], "9.90")
+        self.assertEqual(daily["currency"], "BRL")
+        self.assertEqual(daily["features"]["duration_days"], 1)
+        self.assertIs(daily["features"]["is_lifetime"], False)
+        self.assertIs(daily["features"]["galaxy_live_enabled"], False)
+        self.assertEqual(
+            daily["features"]["highlights"],
+            [
+                "Experiência personalizada",
+                "Fotos e vídeos",
+                "Carta personalizada",
+                "Música",
+                "Link compartilhável",
+                "Disponível por 1 dia",
+            ],
+        )
 
     def test_weekly_plan_shape_and_values(self):
         response = self.client.get(PLANS_URL)
@@ -63,11 +84,15 @@ class PlanListViewTests(TestCase):
         )
 
     def test_lifetime_plan_shape_and_values(self):
+        # "lifetime" é só o code (slug interno, preservado por compatibilidade
+        # com Payment.plan) — o plano em si agora é anual, não vitalício. Só
+        # lifetime_galaxy (o premium) continua vitalício de verdade.
         response = self.client.get(PLANS_URL)
         lifetime = next(item for item in response.data if item["code"] == "lifetime")
-        self.assertEqual(lifetime["name"], "MemoVerse Vitalício")
+        self.assertEqual(lifetime["name"], "MemoVerse Anual")
         self.assertEqual(lifetime["price"], "29.90")
-        self.assertIs(lifetime["features"]["is_lifetime"], True)
+        self.assertEqual(lifetime["features"]["duration_days"], 365)
+        self.assertIs(lifetime["features"]["is_lifetime"], False)
         self.assertIs(lifetime["features"]["galaxy_live_enabled"], False)
         self.assertEqual(
             lifetime["features"]["highlights"],
@@ -77,7 +102,7 @@ class PlanListViewTests(TestCase):
                 "Carta personalizada",
                 "Música",
                 "Link compartilhável",
-                "Disponível para sempre",
+                "Disponível por 1 ano",
             ],
         )
 

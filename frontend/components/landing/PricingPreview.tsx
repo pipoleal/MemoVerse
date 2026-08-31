@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import FadeIn from "../animations/FadeIn";
 import Button from "../ui/Button";
-import { displayPlanHighlight, fetchActivePlans, formatPlanPrice, planCardTitle, type Plan } from "@/lib/checkout";
+import { fetchActivePlans, formatPlanPrice, planCardTitle, type Plan } from "@/lib/checkout";
 
 // Vitrine informativa dos planos na landing page — NUNCA um ponto de escolha
 // de plano. O cliente só escolhe o plano de verdade no checkout, depois de
@@ -86,7 +86,7 @@ export default function PricingPreview() {
                         {plan.features.highlights.map((item) => (
                           <li key={item} className="flex items-start gap-2">
                             <span className="mt-0.5 text-yellow-400">✓</span>
-                            {displayPlanHighlight(item)}
+                            {item}
                           </li>
                         ))}
                       </ul>
