@@ -1,36 +1,48 @@
-"use client";
+import Image from "next/image";
 
-import { motion } from "framer-motion";
+// CSS puro (.fade-up, ver globals.css) em vez de framer-motion initial/animate
+// — mesmo motivo documentado em ComingSoonView.tsx: a transição
+// initial->animate do framer-motion 13 nunca dispara no build de produção
+// real (Next.js 16 + React 19.2), deixando o elemento preso em opacity:0
+// para sempre. Este componente nunca tinha sido exercitado em produção de
+// verdade até agora (middleware.ts sempre serviu /coming-soon no lugar de
+// "/"), então o mesmo bug — invisível em `next dev` — só apareceria no
+// instante do lançamento. CSS puro não depende de nenhum ciclo de vida de
+// biblioteca JS, funciona igual em SSR/hidratação/produção, e já respeita
+// prefers-reduced-motion nativamente.
+function fadeUpStyle(delaySeconds: number): React.CSSProperties {
+  return { animationDelay: `${delaySeconds}s` };
+}
 
 export default function Hero() {
   return (
     <section className="relative z-10 flex flex-col items-center px-6 text-center">
-      <motion.p
-        initial={{ opacity: 0, y: 20, filter: "blur(10px)" }}
-        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        transition={{ duration: 1, delay: 0.2 }}
-        className="mb-6 uppercase tracking-[0.4em] text-yellow-400"
+      <p
+        style={fadeUpStyle(0.1)}
+        className="fade-up mb-2 text-xs font-semibold uppercase tracking-[0.4em] text-yellow-400 sm:text-sm"
       >
-        Welcome to
-      </motion.p>
+        Bem-vindo ao
+      </p>
 
-      <motion.h1
-        initial={{ opacity: 0, y: 30, filter: "blur(12px)" }}
-        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        transition={{ duration: 1.2, delay: 0.5 }}
-        className="bg-linear-to-r from-white via-slate-200 to-yellow-300 bg-clip-text text-7xl font-black tracking-tight text-transparent md:text-8xl lg:text-9xl"
-      >
-        MemoVerse
-      </motion.h1>
+      {/* Logo real (lua crescente + estrelas + "MEMOVERSE" + assinatura
+          "every memory becomes a star") — recorte de public/brand, ver
+          lib/fonts.ts para o porquê de não recriar essa tipografia em CSS. */}
+      <div style={fadeUpStyle(0.3)} className="fade-up relative h-56 w-56 sm:h-72 sm:w-72">
+        <Image src="/brand/memoverse-lockup.png" alt="MemoVerse — every memory becomes a star" fill priority className="object-contain" />
+      </div>
 
-      <motion.p
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 1, delay: 0.8 }}
-        className="mt-6 max-w-2xl text-lg text-gray-300 md:text-2xl"
+      <p
+        style={fadeUpStyle(0.6)}
+        className="fade-up mt-2 text-lg font-bold uppercase tracking-[0.2em] text-white sm:text-2xl"
       >
-        Every memory becomes a star.
-      </motion.p>
+        Suas memórias merecem um universo
+      </p>
+
+      <div style={fadeUpStyle(1)} className="fade-up mt-10 text-yellow-400/70">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 animate-bounce">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </div>
     </section>
   );
 }

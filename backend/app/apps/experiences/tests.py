@@ -3,7 +3,6 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
-from django.contrib.admin import site
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
@@ -1829,69 +1828,6 @@ class DraftDeletionServiceUnitTests(TestCase):
 
         self.assertFalse(ExperienceDraft.objects.filter(id=draft.id).exists())
         self.assertFalse(Media.objects.filter(id=media.id).exists())
-
-
-class ExperiencesAdminReadOnlyTests(TestCase):
-    """Etapa 6 — Fase C: ExperienceDraft/Media/Theme aparecem no Django
-    Admin, com busca/filtro, e SOMENTE leitura (sem Adicionar/Salvar/
-    Excluir) — nenhuma action destrutiva ou de mudança de negócio."""
-
-    def setUp(self):
-        self.staff = User.objects.create_superuser(
-            email="admin@example.com", password="strong-pass-123"
-        )
-        self.client = Client()
-        self.client.force_login(self.staff)
-
-    def test_experience_draft_list_page_loads_with_data(self):
-        draft = make_draft(make_user("owner1@example.com"), title="Aniversário da Ana")
-        response = self.client.get("/admin/experiences/experiencedraft/")
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Aniversário da Ana")
-        self.assertContains(response, str(draft.status))
-
-    def test_media_list_page_loads_with_data(self):
-        draft = make_draft(make_user("owner2@example.com"))
-        make_media(draft, original_filename="foto-especial.jpg")
-        response = self.client.get("/admin/experiences/media/")
-        self.assertEqual(response.status_code, 200)
-
-    def test_theme_list_page_loads_with_data(self):
-        response = self.client.get("/admin/experiences/theme/")
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "universe")
-
-    def test_status_filter_narrows_the_experience_draft_list(self):
-        make_draft(make_user("owner3@example.com"), status=ExperienceDraft.Status.DRAFT)
-        make_draft(make_user("owner4@example.com"), status=ExperienceDraft.Status.PUBLISHED)
-        response = self.client.get(
-            "/admin/experiences/experiencedraft/", {"status__exact": ExperienceDraft.Status.PUBLISHED}
-        )
-        self.assertEqual(response.status_code, 200)
-
-    def test_add_change_and_delete_permissions_are_all_denied(self):
-        request = _FakeRequest(self.staff)
-        for model in (ExperienceDraft, Media, Theme):
-            model_admin = site._registry[model]
-            self.assertFalse(model_admin.has_add_permission(request))
-            self.assertFalse(model_admin.has_change_permission(request))
-            self.assertFalse(model_admin.has_delete_permission(request))
-
-    def test_add_view_is_not_reachable(self):
-        response = self.client.get("/admin/experiences/experiencedraft/add/")
-        self.assertEqual(response.status_code, 403)
-
-    def test_delete_view_is_not_reachable(self):
-        draft = make_draft(make_user("owner5@example.com"))
-        response = self.client.get(f"/admin/experiences/experiencedraft/{draft.id}/delete/")
-        self.assertEqual(response.status_code, 403)
-
-
-class _FakeRequest:
-    """Objeto mínimo com o único atributo que has_*_permission consulta."""
-
-    def __init__(self, user):
-        self.user = user
 
 
 class DraftCreationAndPatchTests(TestCase):

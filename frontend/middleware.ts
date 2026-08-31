@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { isBeforeLaunch } from "./lib/launch";
+import { isBeforeLaunch, LAUNCH_AT_UTC_MS } from "./lib/launch";
 
 // Content-Security-Policy via middleware (não next.config.ts) por um motivo
 // técnico específico, não por preferência: o App Router injeta os próprios
@@ -225,8 +225,9 @@ export function middleware(request: NextRequest) {
   // servido muda — desaparece sozinho, sem deploy novo, no instante exato
   // em que a hora real passar do lançamento.
   const isRoot = request.nextUrl.pathname === "/";
+  const bypass = hasPreviewBypass(request);
   const response =
-    isRoot && isBeforeLaunch()
+    isRoot && isBeforeLaunch() && !bypass
       ? NextResponse.rewrite(new URL("/coming-soon", request.url), {
           request: { headers: requestHeaders },
         })
@@ -235,7 +236,48 @@ export function middleware(request: NextRequest) {
         });
   response.headers.set("Content-Security-Policy", csp);
 
+  // Grava o cookie só quando o bypass veio da query string (?preview_key=...)
+  // — uma visita já usando o cookie não precisa regravá-lo. httpOnly: nunca
+  // legível/gravável por JS de página nenhuma (inclusive um XSS
+  // hipotético); sameSite=lax + secure fora de dev: nunca enviado
+  // cross-site nem por http puro. Expira sozinho pouco depois do
+  // lançamento — não é um mecanismo de acesso permanente, só evita
+  // repetir o link secreto a cada visita durante a janela de preview.
+  if (bypass === "from-query") {
+    response.cookies.set(PREVIEW_COOKIE_NAME, previewSecret() ?? "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: !isDev,
+      path: "/",
+      expires: new Date(LAUNCH_AT_UTC_MS + 24 * 60 * 60 * 1000),
+    });
+  }
+
   return response;
+}
+
+const PREVIEW_COOKIE_NAME = "mv_preview";
+
+// LAUNCH_PREVIEW_SECRET: variável de servidor só (nunca NEXT_PUBLIC_*, nunca
+// commitada) — configurada localmente em frontend/.env.local e, em
+// produção, direto no painel do Vercel. Sem ela configurada, o bypass fica
+// permanentemente desligado (nunca um valor padrão adivinhável).
+function previewSecret(): string | null {
+  const value = process.env.LAUNCH_PREVIEW_SECRET;
+  return value && value.length > 0 ? value : null;
+}
+
+// Permite visitar "/" antes do lançamento sem esperar a hora oficial —
+// só para quem tem o link secreto (?preview_key=...) ou já visitou uma vez
+// e carrega o cookie resultante. Nunca vaza para o público: sem a env var
+// configurada, ?preview_key=qualquer-coisa nunca bate com null.
+function hasPreviewBypass(request: NextRequest): "from-query" | "from-cookie" | false {
+  const secret = previewSecret();
+  if (!secret) return false;
+
+  if (request.nextUrl.searchParams.get("preview_key") === secret) return "from-query";
+  if (request.cookies.get(PREVIEW_COOKIE_NAME)?.value === secret) return "from-cookie";
+  return false;
 }
 
 export const config = {

@@ -6,11 +6,14 @@ import CardPaymentBlock from "./CardPaymentBlock";
 import ThemeVisual from "@/components/dashboard/ThemeVisual";
 import {
   createOrResumeCheckout,
+  displayPlanHighlight,
+  displayPlanName,
   extractCheckoutErrorMessage,
   fetchActivePlans,
   fetchDraftPaymentStatus,
   formatPlanPrice,
   getActiveConflictPlanCode,
+  planCardTitle,
   FAILED_PAYMENT_STATUSES,
   type CardCheckoutData,
   type CheckoutResponse,
@@ -43,31 +46,10 @@ type Phase =
   | { kind: "payment_failed"; status: PaymentStatus; checkout: CheckoutResponse | null; planCode: string }
   | { kind: "error"; message: string };
 
-// "MemoVerse 1 Semana" -> "1 SEMANA" — a live transform of the real plan
-// name from the API, never a separate hardcoded title per plan_code (which
-// could silently drift from the backend's Plan.name).
-// Comunicação comercial: "Vitalício" virou "Anual" só na apresentação.
-// Plan.name (banco, seedado em
-// payments/migrations/0005_seed_commercial_plans.py) e
-// duration_days/is_lifetime/preço (ver
-// experiences/services/publication_service.py) continuam exatamente como
-// estão — nenhuma lógica de cobrança/duração é tocada aqui, só o texto
-// exibido nestes dois pontos de renderização.
-function displayPlanName(name: string): string {
-  return name.replace(/Vitalício/gi, "Anual");
-}
-
-// "Disponível para sempre" (um dos highlights vindos do banco, ver
-// payments/migrations/0006_add_plan_highlights.py) contradiria um plano
-// agora chamado "Anual" na tela — mesmo tipo de substituição só de
-// apresentação, nunca alterando o array que vem da API.
-function displayPlanHighlight(highlight: string): string {
-  return highlight.replace(/Dispon[ií]vel para sempre/gi, "Disponível por 1 ano");
-}
-
-function planCardTitle(name: string): string {
-  return displayPlanName(name).replace(/^MemoVerse\s+/i, "").toUpperCase();
-}
+// displayPlanName/displayPlanHighlight/planCardTitle agora vivem em
+// @/lib/checkout — a landing page (PricingPreview.tsx) precisa exatamente
+// da mesma transformação de apresentação, e frontend/CLAUDE.md pede para
+// nunca duplicar lógica existente entre componentes.
 
 // Reused wherever the currently-selected/checked-out plan needs to be
 // summarized — never re-derived or hardcoded a second time.
