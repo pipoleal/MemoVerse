@@ -141,7 +141,7 @@ export default function PhotoMemoryBeat({
 
       <div className={`relative flex w-full ${justify}`}>
         {isNear && (
-          <div className="flex w-full max-w-xl flex-col items-center gap-8">
+          <div className="flex w-full max-w-xl flex-col items-center gap-10">
             <motion.div
               initial={{ opacity: 0, scale: 0.94, filter: "blur(6px)" }}
               whileInView={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
@@ -179,18 +179,19 @@ export default function PhotoMemoryBeat({
                 Cartão com a mesma linguagem do tema escolhido (ornamentClass/
                 textClass, os mesmos tokens que LetterChapter já usa) — nunca
                 mais um texto solto colado embaixo da foto, sem contraste com
-                o fundo. gap-6 acima (era gap-4) dá o respiro entre foto e
-                legenda que faltava. */}
+                o fundo. gap-10 no container acima dá o respiro entre foto e
+                legenda, e px-8/py-5/leading-loose aqui evitam o texto
+                grudado nas bordas do cartão. */}
             {caption && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, amount: 0.4 }}
                 transition={{ duration: 0.8, delay: 0.25, ease: "easeOut" }}
-                className={`w-fit max-w-[85%] rounded-2xl border px-6 py-4 text-center backdrop-blur-sm ${theme.letter.ornamentClass}`}
+                className={`w-fit max-w-[85%] rounded-2xl border px-8 py-5 text-center backdrop-blur-sm ${theme.letter.ornamentClass}`}
               >
                 <p
-                  className={`wrap-anywhere text-sm italic leading-relaxed sm:text-base ${theme.letter.textClass}`}
+                  className={`wrap-anywhere text-sm italic leading-loose tracking-wide sm:text-base ${theme.letter.textClass}`}
                 >
                   {caption}
                 </p>

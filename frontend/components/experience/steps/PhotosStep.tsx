@@ -17,34 +17,34 @@ const MAX_PHOTOS = 10;
 // mesma frase em todas as fotos da mesma experiência.
 const CAPTION_SUGGESTIONS: Record<ExperienceTypeId, string[]> = {
   birthday: [
-    "Mais um ano, mais motivos pra celebrar você 🎂",
-    "Feliz por poder comemorar você hoje 🥳",
-    "Que seu novo ano seja tão especial quanto você ✨",
+    "Aquele sorriso que resume o motivo da festa 🎂",
+    "Bolo, vela e a certeza de que valeu cada ano até aqui 🥳",
+    "Um flash desse dia que eu quero guardar pra sempre ✨",
   ],
   dating: [
-    "O começo da nossa história ❤️",
-    "Foi aqui que tudo começou",
-    "Ainda lembro exatamente como me senti",
+    "O dia em que percebi que você mudaria tudo ❤️",
+    "Essa foto guarda o exato momento em que me apaixonei",
+    "Nem sei explicar direito o que senti olhando pra você aqui",
   ],
   marriage: [
-    "O começo do resto das nossas vidas 💍",
-    "Um momento que vamos guardar para sempre",
-    "O dia em que escolhemos nosso futuro juntos ❤️",
+    "O segundo em que dissemos sim pra tudo que viria 💍",
+    "Essa foto carrega o peso bom de uma promessa cumprida",
+    "O dia em que nossas duas histórias viraram uma só ❤️",
   ],
   monthiversary: [
-    "Mais um mês, mais uma memória nossa 🤍",
-    "Pequenos momentos que viram grandes lembranças",
-    "Mais tempo juntos, mais histórias pra contar",
+    "Mais um mês colado nessa nossa coleção de momentos 🤍",
+    "Essa foto é prova de que cada mês com você vale a pena",
+    "Um detalhe pequeno desse mês que eu não queria esquecer",
   ],
   tribute: [
-    "Uma lembrança que guardo com muito carinho",
-    "Uma pessoa que merece ser lembrada para sempre ❤️",
-    "Uma memória que sempre vai ter um lugar especial",
+    "Um pedaço de você que eu carrego onde quer que eu vá ❤️",
+    "Essa foto é exatamente como eu quero lembrar de você",
+    "A saudade dói, mas esse momento continua intacto aqui",
   ],
   custom: [
-    "Um momento que merece ser lembrado ✨",
-    "Essa foto guarda um pedacinho da nossa história",
-    "Uma memória especial para guardar",
+    "Essa foto tem um motivo pra estar aqui — qual é o seu? ✨",
+    "Um detalhe desse dia que eu não queria deixar passar",
+    "O que essa imagem te faz lembrar quando você olha pra ela?",
   ],
 };
 
