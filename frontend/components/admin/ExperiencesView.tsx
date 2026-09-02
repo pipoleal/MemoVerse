@@ -40,6 +40,16 @@ function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default function ExperiencesView() {
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -115,6 +125,7 @@ export default function ExperiencesView() {
                   <th className="px-6 py-4 font-semibold sm:px-8">Status</th>
                   <th className="px-6 py-4 font-semibold sm:px-8">Tipo / Tema</th>
                   <th className="px-6 py-4 font-semibold sm:px-8">Slug</th>
+                  <th className="px-6 py-4 font-semibold sm:px-8">Criado em</th>
                   <th className="px-6 py-4 font-semibold sm:px-8">Atualizado em</th>
                   <th className="px-6 py-4 font-semibold sm:px-8">Expira em</th>
                 </tr>
@@ -122,17 +133,17 @@ export default function ExperiencesView() {
               <tbody className="divide-y divide-white/5">
                 {data.results.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-10 text-center text-slate-500 sm:px-8">
+                    <td colSpan={7} className="px-6 py-10 text-center text-slate-500 sm:px-8">
                       Nenhuma experiência encontrada.
                     </td>
                   </tr>
                 )}
                 {data.results.map((exp) => (
                   <tr key={exp.id}>
-                    <td colSpan={6} className="p-0">
+                    <td colSpan={7} className="p-0">
                       <Link
                         href={`/admin/experiences/${exp.id}`}
-                        className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr] items-center px-6 py-4 transition hover:bg-white/5 sm:px-8"
+                        className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_1fr] items-center px-6 py-4 transition hover:bg-white/5 sm:px-8"
                       >
                         <span className="text-slate-400">{exp.owner_email ?? "— (anônimo)"}</span>
                         <span>
@@ -144,6 +155,7 @@ export default function ExperiencesView() {
                           {exp.experience_type || "—"} {exp.theme ? `/ ${exp.theme}` : ""}
                         </span>
                         <span className="font-mono text-xs text-slate-500">{exp.slug ?? "—"}</span>
+                        <span className="text-slate-500">{formatDateTime(exp.created_at)}</span>
                         <span className="text-slate-500">{formatDate(exp.updated_at)}</span>
                         <span className="text-slate-500">{formatDate(exp.expires_at)}</span>
                       </Link>

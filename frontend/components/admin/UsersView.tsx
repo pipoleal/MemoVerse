@@ -25,8 +25,14 @@ type AdminUserRow = {
 
 const LIMIT = 25;
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function UsersView() {
@@ -137,7 +143,7 @@ export default function UsersView() {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-400 sm:px-8">{user.stars_count}</td>
-                    <td className="px-6 py-4 text-slate-500 sm:px-8">{formatDate(user.created_at)}</td>
+                    <td className="px-6 py-4 text-slate-500 sm:px-8">{formatDateTime(user.created_at)}</td>
                     <td className="px-6 py-4 text-right sm:px-8">
                       {!user.is_admin && (
                         <button
