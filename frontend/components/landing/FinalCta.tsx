@@ -16,7 +16,7 @@ export default function FinalCta() {
           Cada memória, um universo.
         </h2>
         <p className="mx-auto mt-5 max-w-md text-slate-400">
-          Comece agora, de graça — e transforme um momento especial em uma experiência para sempre.
+          Comece agora e transforme um momento especial em uma experiência inesquecível.
         </p>
         <div className="mt-10 flex justify-center">
           <Button variant="primary" onClick={() => router.push("/experience/new")}>

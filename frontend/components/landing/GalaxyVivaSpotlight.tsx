@@ -53,11 +53,11 @@ export default function GalaxyVivaSpotlight() {
             </li>
             <li className="flex items-start gap-2">
               <span className="mt-0.5 text-yellow-400">✓</span>
-              Pague uma vez e aproveite por 12 meses
+              Pague uma vez e aproveite para sempre
             </li>
             <li className="flex items-start gap-2">
               <span className="mt-0.5 text-yellow-400">✓</span>
-              Disponível no plano Anual + Galáxia Viva
+              Disponível no plano Vitalício + Galáxia Viva
             </li>
           </ul>
         </FadeIn>

@@ -102,7 +102,7 @@ export default function PricingPreview() {
                   ⭐ Criar minha experiência
                 </Button>
                 <p className="text-xs text-slate-500">
-                  Comece de graça — você escolhe o plano só na hora de publicar.
+                  Você só escolhe e paga o plano na hora de publicar.
                 </p>
               </div>
             </FadeIn>
