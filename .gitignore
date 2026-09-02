@@ -22,6 +22,7 @@ dist/
 # Environment
 .env
 .env.*
+*.env
 !.env.example
 
 # IDE
@@ -45,3 +46,10 @@ htmlcov/
 
 # Docker
 docker-data/
+
+# Stray local artifacts (accidental root `npm install`, one-off curl output,
+# local AI-tool config) — never intentional project files.
+/package.json
+/package-lock.json
+*.out
+.codex/
