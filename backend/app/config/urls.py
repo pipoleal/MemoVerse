@@ -9,6 +9,9 @@ urlpatterns = [
     path("api/auth/", include("apps.accounts.urls")),
     path("api/experiences/", include("apps.experiences.urls")),
     path("api/payments/", include("apps.payments.urls")),
+    # Instrumentação anônima do funil de conversão — POST público, nunca
+    # exige autenticação (ver apps.telemetry.views.FunnelEventCreateView).
+    path("api/events/", include("apps.telemetry.urls")),
     # Único prefixo sem autenticação de toda a API — deliberadamente fora de
     # api/experiences/ (que é toda autenticada/ownership) para deixar
     # explícito, só pela URL, que esta rota é pública.

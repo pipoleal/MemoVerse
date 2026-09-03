@@ -9,6 +9,7 @@ import { useExperience } from "../context/ExperienceContext";
 import { getAccessToken } from "@/lib/storage";
 import { api } from "@/lib/api";
 import { toPayload } from "@/lib/pendingExperience";
+import { logEvent } from "@/lib/analytics";
 
 export default function PreviewStep() {
   const [completed, setCompleted] = useState(false);
@@ -18,6 +19,8 @@ export default function PreviewStep() {
   const { experience, ensureDraftId } = useExperience();
 
   async function handleCompleted() {
+    logEvent("preview_completed");
+
     // Already authenticated (e.g. came from the dashboard's "Criar Nova
     // Experiência", wired up in an earlier task): skip the register/login
     // prompt entirely and go straight to checkout. Anonymous visitors keep

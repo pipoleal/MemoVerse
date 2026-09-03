@@ -15,6 +15,7 @@ from rest_framework import serializers
 
 from apps.experiences.models import ExperienceDraft
 from apps.payments.models import Payment, Plan, WebhookEvent
+from apps.telemetry.models import FunnelEvent
 
 # Mesmo teto pensado para os --limit/--*-limit dos management commands:
 # protege contra um cliente (mesmo autenticado como admin) disparando uma
@@ -60,6 +61,11 @@ class AdminPaymentListQuerySerializer(AdminListQuerySerializer):
 
 class AdminWebhookEventListQuerySerializer(AdminListQuerySerializer):
     status = serializers.ChoiceField(choices=WebhookEvent.Status.choices, required=False)
+
+
+class AdminFunnelEventListQuerySerializer(AdminListQuerySerializer):
+    name = serializers.ChoiceField(choices=FunnelEvent.Name.choices, required=False)
+    session_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
 
 
 class _OptionalBooleanField(serializers.BooleanField):

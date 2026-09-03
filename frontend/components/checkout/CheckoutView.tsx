@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import CardPaymentBlock from "./CardPaymentBlock";
 import ThemeVisual from "@/components/dashboard/ThemeVisual";
+import { logEvent } from "@/lib/analytics";
 import {
   createOrResumeCheckout,
   extractCheckoutErrorMessage,
@@ -101,6 +102,9 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
     isRetryAfterConflict = false
   ) {
     setPhase({ kind: "creating", method });
+    if (!isRetryAfterConflict) {
+      logEvent("payment_started", { draftId, metadata: { plan_code: planCode, method } });
+    }
 
     try {
       const result = await createOrResumeCheckout(draftId, planCode, method, cardData);
@@ -119,6 +123,7 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
       // the Brick for a fresh token rather than the page silently retrying
       // with the same (now-dead) token, so this always surfaces as an error
       // (never a silent retry) for both methods, same as before this change.
+      logEvent("payment_failed", { draftId, metadata: { plan_code: planCode, method, reason: "gateway_error" } });
       setPhase({ kind: "error", message: extractCheckoutErrorMessage(error) });
     }
   }
@@ -128,8 +133,10 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
     // result.status (ultimately sourced from the Mercado Pago Order/webhook
     // confirmation) decides which phase this becomes.
     if (result.status === "approved") {
+      logEvent("payment_approved", { draftId, metadata: { plan_code: result.plan.code } });
       setPhase({ kind: "approved", checkout: result });
     } else if (FAILED_PAYMENT_STATUSES.includes(result.status)) {
+      logEvent("payment_failed", { draftId, metadata: { plan_code: result.plan.code, status: result.status } });
       setPhase({ kind: "payment_failed", status: result.status, checkout: result, planCode: result.plan.code });
     } else {
       setPhase({ kind: "awaiting_payment", checkout: result, method });
@@ -219,6 +226,7 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
   useEffect(() => {
     if (hasInitializedRef.current) return;
     hasInitializedRef.current = true;
+    logEvent("checkout_viewed", { draftId });
     void initialize();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftId]);
@@ -239,10 +247,12 @@ export default function CheckoutView({ draftId }: { draftId: string }) {
         if (!paymentStatus) return;
 
         if (paymentStatus === "approved") {
+          logEvent("payment_approved", { draftId });
           setPhase((current) =>
             current.kind === "awaiting_payment" ? { kind: "approved", checkout: current.checkout } : current
           );
         } else if (FAILED_PAYMENT_STATUSES.includes(paymentStatus)) {
+          logEvent("payment_failed", { draftId, metadata: { status: paymentStatus } });
           setPhase((current) =>
             current.kind === "awaiting_payment"
               ? {
@@ -620,6 +630,7 @@ function ApprovedBlock({ draftId }: { draftId: string }) {
       // Any 200 here — first publish or an idempotent republish of an
       // already-published draft — is treated identically as success; the
       // backend guarantees the same slug either way, no special-casing.
+      logEvent("publication_completed", { draftId });
       setPublishPhase({ kind: "published", slug: result.slug, title, theme });
     } catch (error) {
       // Publish failing never touches CheckoutView's own phase — the

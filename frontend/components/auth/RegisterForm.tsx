@@ -11,6 +11,7 @@ import { clearPendingExperience, hasPendingExperience, savePendingExperienceDraf
 import { clearPendingGalaxySave, getPendingGalaxySave } from "@/lib/pendingGalaxySave";
 import { saveExperienceToGalaxy } from "@/lib/publicExperience";
 import { saveUserFirstName } from "@/lib/storage";
+import { logEvent } from "@/lib/analytics";
 import Button from "../ui/Button";
 import Input from "./Input";
 import PasswordInput from "./PasswordInput";
@@ -33,6 +34,13 @@ export default function RegisterForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [registrationComplete, setRegistrationComplete] = useState(false);
+  // Reflete o mesmo estado que decide o redirect no fim de handleSubmit
+  // (claimedDraftId): se existe um draft anônimo salvo neste navegador,
+  // quem chegou aqui veio do fluxo Preview -> "Sua galáxia está quase
+  // pronta" -> Cadastro, não de um cadastro direto pela landing. Lido uma
+  // única vez, na montagem — nunca recalculado durante o preenchimento do
+  // formulário, para não sumir/aparecer sob o usuário enquanto ele digita.
+  const [hasPendingGalaxy] = useState(() => Boolean(getAnonymousDraft()));
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,11 +48,13 @@ export default function RegisterForm() {
     setError("");
     try {
       if (!registrationComplete) {
+        logEvent("signup_started");
         await api.post("/auth/register/", { first_name: firstName, last_name: lastName, email, password });
         setRegistrationComplete(true);
       }
       await login({ email, password });
       saveUserFirstName(firstName);
+      logEvent("signup_completed");
 
       // Etapa 10: reivindica o draft anônimo (texto + mídia já enviada),
       // se existir. Best-effort de propósito — cadastro/login já
@@ -105,6 +115,12 @@ export default function RegisterForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {hasPendingGalaxy && (
+        <p className="rounded-2xl border border-yellow-300/20 bg-yellow-300/5 px-4 py-3 text-sm text-yellow-100/90">
+          <strong className="font-semibold">Sua galáxia está salva.</strong> Após criar sua conta, você poderá
+          escolher seu plano e concluir a publicação.
+        </p>
+      )}
       <Input label="Nome" name="firstName" value={firstName} onChange={(event) => setFirstName(event.target.value)} required />
       <Input label="Sobrenome" name="lastName" value={lastName} onChange={(event) => setLastName(event.target.value)} required />
       <Input label="E-mail" type="email" name="email" value={email} onChange={(event) => setEmail(event.target.value)} required />

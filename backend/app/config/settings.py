@@ -64,6 +64,10 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.experiences",
     "apps.payments",
+    # Instrumentação anônima do funil de conversão (ver
+    # apps.telemetry.models.FunnelEvent) — POST público em /api/events/,
+    # leitura só pelo painel /admin (apps.ops.views.FunnelEventListView).
+    "apps.telemetry",
     # Etapa 9B.4: painel administrativo read-only temporário (ver
     # apps/ops/__init__.py) — sem models, sem migrations.
     "apps.ops",
@@ -277,6 +281,11 @@ REST_FRAMEWORK = {
         # código (ver apps.accounts.models.MAX_PASSWORD_RESET_ATTEMPTS).
         "password_reset_request": "5/hour",
         "password_reset_verify": "10/hour",
+        # Instrumentação do funil (apps.telemetry): uma sessão real passa
+        # por, no máximo, as 9 etapas monitoradas — 60/hora por IP dá
+        # bastante folga (retries, múltiplas abas) sem abrir espaço para
+        # inflar métricas de forma barata.
+        "funnel_event": "60/hour",
     },
 }
 

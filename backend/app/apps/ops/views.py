@@ -44,9 +44,11 @@ from apps.experiences.storage import generate_presigned_read_url, r2_is_configur
 from apps.payments.management.commands.payment_reconcile import Command as PaymentReconcileCommand
 from apps.payments.models import Payment, PlanDiscount, WebhookEvent
 from apps.payments.services.payment_confirmation_service import PaymentConfirmationService
+from apps.telemetry.models import FunnelEvent
 
 from .serializers import (
     AdminExperienceListQuerySerializer,
+    AdminFunnelEventListQuerySerializer,
     AdminPaymentListQuerySerializer,
     AdminPlanDiscountCreateSerializer,
     AdminPlanDiscountListQuerySerializer,
@@ -356,6 +358,57 @@ class WebhookEventListView(_BaseOpsReportView):
         ]
 
         logger.info("ops.admin_webhook_events.accessed")
+        return Response(
+            {
+                "generated_at": timezone.now().isoformat(),
+                "count": total,
+                "limit": limit,
+                "offset": offset,
+                "results": results,
+            }
+        )
+
+
+class FunnelEventListView(_BaseOpsReportView):
+    """GET /api/ops/9b4/funnel-events/
+
+    Alimenta a seção "Logs" do painel, ao lado dos webhooks — instrumentação
+    do funil de conversão (ver apps.telemetry.models.FunnelEvent), a única
+    forma hoje de ver a JORNADA de um visitante (não só o estado final de um
+    draft/pagamento). Filtros opcionais por nome do evento e por
+    session_id (para reconstruir a linha do tempo de UMA sessão de
+    navegador)."""
+
+    def get(self, request):
+        query = AdminFunnelEventListQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        data = query.validated_data
+        limit, offset = data["limit"], data["offset"]
+
+        qs = FunnelEvent.objects.all().order_by("-created_at")
+        name_filter = data.get("name")
+        if name_filter:
+            qs = qs.filter(name=name_filter)
+        session_id_filter = data.get("session_id")
+        if session_id_filter:
+            qs = qs.filter(session_id=session_id_filter)
+
+        total = qs.count()
+        page = list(qs[offset : offset + limit])
+
+        results = [
+            {
+                "id": str(event.id),
+                "name": event.name,
+                "session_id": event.session_id,
+                "draft_id": event.draft_id,
+                "metadata": event.metadata,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in page
+        ]
+
+        logger.info("ops.admin_funnel_events.accessed")
         return Response(
             {
                 "generated_at": timezone.now().isoformat(),
