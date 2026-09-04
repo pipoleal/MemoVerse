@@ -40,6 +40,7 @@ class RegisterView(APIView):
             first_name=data["first_name"],
             last_name=data["last_name"],
             password=data["password"],
+            phone=data.get("phone", ""),
         )
 
         logger.info("auth.register.success")

@@ -44,9 +44,11 @@ from apps.experiences.storage import generate_presigned_read_url, r2_is_configur
 from apps.payments.management.commands.payment_reconcile import Command as PaymentReconcileCommand
 from apps.payments.models import Payment, PlanDiscount, WebhookEvent
 from apps.payments.services.payment_confirmation_service import PaymentConfirmationService
+from apps.recovery.models import CartRecoveryMessage
 from apps.telemetry.models import FunnelEvent
 
 from .serializers import (
+    AdminCartRecoveryMessageListQuerySerializer,
     AdminExperienceListQuerySerializer,
     AdminFunnelEventListQuerySerializer,
     AdminPaymentListQuerySerializer,
@@ -409,6 +411,65 @@ class FunnelEventListView(_BaseOpsReportView):
         ]
 
         logger.info("ops.admin_funnel_events.accessed")
+        return Response(
+            {
+                "generated_at": timezone.now().isoformat(),
+                "count": total,
+                "limit": limit,
+                "offset": offset,
+                "results": results,
+            }
+        )
+
+
+class CartRecoveryMessageListView(_BaseOpsReportView):
+    """GET /api/ops/9b4/cart-recovery-messages/
+
+    Visibilidade do fluxo de recuperação de carrinho abandonado (ver
+    apps.recovery.management.commands.cart_recovery) — cada linha é UM
+    envio (draft, etapa, canal) já tentado, nunca um preview do que ainda
+    vai acontecer. owner_email nunca é o e-mail de verdade de outra
+    listagem duplicado: é resolvido aqui, a partir do draft, só para dar
+    contexto sem precisar de uma segunda chamada."""
+
+    def get(self, request):
+        query = AdminCartRecoveryMessageListQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        data = query.validated_data
+        limit, offset = data["limit"], data["offset"]
+
+        qs = CartRecoveryMessage.objects.select_related("draft__owner").order_by("-created_at")
+        stage_filter = data.get("stage")
+        if stage_filter:
+            qs = qs.filter(stage=stage_filter)
+        channel_filter = data.get("channel")
+        if channel_filter:
+            qs = qs.filter(channel=channel_filter)
+        status_filter = data.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        owner_email_filter = data.get("owner_email")
+        if owner_email_filter:
+            qs = qs.filter(draft__owner__email__icontains=owner_email_filter)
+
+        total = qs.count()
+        page = list(qs[offset : offset + limit])
+
+        results = [
+            {
+                "id": str(message.id),
+                "draft_id": str(message.draft_id),
+                "owner_email": message.draft.owner.email if message.draft.owner_id else None,
+                "stage": message.stage,
+                "channel": message.channel,
+                "status": message.status,
+                "error_detail": message.error_detail,
+                "created_at": message.created_at.isoformat(),
+            }
+            for message in page
+        ]
+
+        logger.info("ops.admin_cart_recovery_messages.accessed")
         return Response(
             {
                 "generated_at": timezone.now().isoformat(),

@@ -68,6 +68,10 @@ INSTALLED_APPS = [
     # apps.telemetry.models.FunnelEvent) — POST público em /api/events/,
     # leitura só pelo painel /admin (apps.ops.views.FunnelEventListView).
     "apps.telemetry",
+    # Fluxo de recuperação de carrinho abandonado — e-mail/WhatsApp em
+    # 1h/24h/72h para quem criou uma experiência mas não publicou (ver
+    # apps.recovery.management.commands.cart_recovery).
+    "apps.recovery",
     # Etapa 9B.4: painel administrativo read-only temporário (ver
     # apps/ops/__init__.py) — sem models, sem migrations.
     "apps.ops",
@@ -209,6 +213,29 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="onboarding@resend.dev
 # chama o SDK do Resend.
 RESEND_API_KEY = config("RESEND_API_KEY", default="")
 
+# Origem do frontend Next.js — usado só para montar links absolutos que
+# saem do backend (ver apps.recovery.services.recovery_link, que monta
+# "<FRONTEND_BASE_URL>/r/<token>" para o e-mail/WhatsApp de recuperação de
+# carrinho). Nunca lido de CORS_ALLOWED_ORIGINS (aquela lista pode ter mais
+# de uma origem; esta variável é sempre uma só, a canônica).
+FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default="http://localhost:3000").rstrip("/")
+
+# WhatsApp Cloud API (Meta) — ver apps.recovery.services.whatsapp_service.
+# Vazios por padrão: nenhuma conta WhatsApp Business foi conectada ainda em
+# nenhum ambiente, então is_whatsapp_configured() volta False e o comando
+# cart_recovery só registra "canal não configurado", nunca finge um envio.
+WHATSAPP_API_TOKEN = config("WHATSAPP_API_TOKEN", default="")
+WHATSAPP_PHONE_NUMBER_ID = config("WHATSAPP_PHONE_NUMBER_ID", default="")
+# Nome de cada Message Template já aprovado na Meta Business Manager, por
+# etapa do fluxo (ver docstring de whatsapp_service.py sobre por que tem
+# que ser um template, nunca texto livre). Vazio = etapa sem template
+# configurado ainda -> cart_recovery pula o WhatsApp dessa etapa.
+WHATSAPP_TEMPLATES = {
+    "1h": config("WHATSAPP_TEMPLATE_1H", default=""),
+    "24h": config("WHATSAPP_TEMPLATE_24H", default=""),
+    "72h": config("WHATSAPP_TEMPLATE_72H", default=""),
+}
+
 
 AUTH_USER_MODEL = "accounts.User"
 
@@ -286,6 +313,11 @@ REST_FRAMEWORK = {
         # bastante folga (retries, múltiplas abas) sem abrir espaço para
         # inflar métricas de forma barata.
         "funnel_event": "60/hour",
+        # Troca do token de recuperação de carrinho por access/refresh (ver
+        # apps.recovery.views.RecoveryTokenRedeemView) — 256 bits de
+        # entropia já tornam adivinhação inviável; este limite é só
+        # defesa-em-profundidade contra um cliente em retry-loop.
+        "recovery_redeem": "20/hour",
     },
 }
 

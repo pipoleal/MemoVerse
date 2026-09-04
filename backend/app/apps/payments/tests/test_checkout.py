@@ -314,6 +314,7 @@ class CheckoutPlanDiscountTests(TestCase):
         self.assertEqual(payment.amount, Decimal("19.90"))
 
 
+
 class CheckoutRealPriceRegardlessOfEmailTests(TestCase):
     """Etapa 5 — Fase C: o bypass temporário de R$1,00
     (CheckoutService._TEMP_R1_TEST_OWNER_EMAIL) foi removido. Estes testes

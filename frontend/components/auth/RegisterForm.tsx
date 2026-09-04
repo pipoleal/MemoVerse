@@ -30,6 +30,7 @@ export default function RegisterForm() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -49,7 +50,7 @@ export default function RegisterForm() {
     try {
       if (!registrationComplete) {
         logEvent("signup_started");
-        await api.post("/auth/register/", { first_name: firstName, last_name: lastName, email, password });
+        await api.post("/auth/register/", { first_name: firstName, last_name: lastName, email, phone, password });
         setRegistrationComplete(true);
       }
       await login({ email, password });
@@ -124,6 +125,19 @@ export default function RegisterForm() {
       <Input label="Nome" name="firstName" value={firstName} onChange={(event) => setFirstName(event.target.value)} required />
       <Input label="Sobrenome" name="lastName" value={lastName} onChange={(event) => setLastName(event.target.value)} required />
       <Input label="E-mail" type="email" name="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+      <div>
+        <Input
+          label="WhatsApp (opcional)"
+          type="tel"
+          name="phone"
+          placeholder="11999999999"
+          value={phone}
+          onChange={(event) => setPhone(event.target.value)}
+        />
+        <p className="mt-1.5 text-xs text-slate-400">
+          Só usamos para avisar se você não terminar seu presente — nunca para outra coisa.
+        </p>
+      </div>
       <PasswordInput label="Senha" name="password" placeholder="Mínimo de 8 caracteres" value={password} onChange={(event) => setPassword(event.target.value)} required />
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       <Button type="submit" className="w-full">{loading ? "Criando conta..." : "Criar conta"}</Button>

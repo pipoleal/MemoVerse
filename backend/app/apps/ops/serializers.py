@@ -15,6 +15,7 @@ from rest_framework import serializers
 
 from apps.experiences.models import ExperienceDraft
 from apps.payments.models import Payment, Plan, WebhookEvent
+from apps.recovery.models import CartRecoveryMessage
 from apps.telemetry.models import FunnelEvent
 
 # Mesmo teto pensado para os --limit/--*-limit dos management commands:
@@ -66,6 +67,13 @@ class AdminWebhookEventListQuerySerializer(AdminListQuerySerializer):
 class AdminFunnelEventListQuerySerializer(AdminListQuerySerializer):
     name = serializers.ChoiceField(choices=FunnelEvent.Name.choices, required=False)
     session_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+
+
+class AdminCartRecoveryMessageListQuerySerializer(AdminListQuerySerializer):
+    stage = serializers.ChoiceField(choices=CartRecoveryMessage.Stage.choices, required=False)
+    channel = serializers.ChoiceField(choices=CartRecoveryMessage.Channel.choices, required=False)
+    status = serializers.ChoiceField(choices=CartRecoveryMessage.Status.choices, required=False)
+    owner_email = serializers.CharField(required=False, allow_blank=True, max_length=254)
 
 
 class _OptionalBooleanField(serializers.BooleanField):

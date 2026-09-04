@@ -21,6 +21,17 @@ class RegisterSerializer(serializers.Serializer):
         min_length=8,
     )
 
+    # Opcional (ver User.phone) — canal extra do fluxo de recuperação de
+    # carrinho abandonado (apps.recovery). Nunca required=True: isso
+    # adicionaria fricção ao cadastro que a correção do funil de conversão
+    # acabou de remover.
+    phone = serializers.CharField(
+        max_length=32,
+        required=False,
+        allow_blank=True,
+        default="",
+    )
+
     def validate_email(self, value):
         # Etapa 8 — Fase C: mensagem deliberadamente genérica — não confirma
         # que o e-mail já tem conta. Mitigação parcial: o texto não vaza

@@ -21,6 +21,7 @@ class AuthService:
         first_name: str,
         last_name: str,
         password: str,
+        phone: str = "",
     ) -> User:
         """
         Cria um novo usuário.
@@ -33,6 +34,7 @@ class AuthService:
             first_name=first_name,
             last_name=last_name,
             password=password,
+            phone=phone,
         )
 
         return user

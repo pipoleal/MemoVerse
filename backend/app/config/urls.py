@@ -12,6 +12,10 @@ urlpatterns = [
     # Instrumentação anônima do funil de conversão — POST público, nunca
     # exige autenticação (ver apps.telemetry.views.FunnelEventCreateView).
     path("api/events/", include("apps.telemetry.urls")),
+    # Troca do token de recuperação de carrinho abandonado por access/refresh
+    # — também público (o clique no e-mail/WhatsApp é o único contexto que
+    # existe antes disso; ver apps.recovery.views).
+    path("api/recovery/", include("apps.recovery.urls")),
     # Único prefixo sem autenticação de toda a API — deliberadamente fora de
     # api/experiences/ (que é toda autenticada/ownership) para deixar
     # explícito, só pela URL, que esta rota é pública.

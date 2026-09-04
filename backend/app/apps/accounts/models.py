@@ -38,6 +38,19 @@ class User(AbstractBaseUser, PermissionsMixin):
         max_length=100,
     )
 
+    # Opcional, sempre em branco por padrão — coletado no cadastro (ver
+    # RegisterSerializer) só para quem escolhe informar, como canal extra do
+    # fluxo de recuperação de carrinho abandonado (ver apps.recovery). Nunca
+    # obrigatório: exigir isso no /register reintroduziria a mesma fricção
+    # que a correção do funil de conversão acabou de remover. Formato livre
+    # (com DDI/DDD como o usuário digitar) — normalização/validação de
+    # verdade fica para quando um provedor de WhatsApp real for integrado.
+    phone = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+    )
+
     stars_count = models.PositiveIntegerField(
         default=0,
     )

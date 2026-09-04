@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    CartRecoveryMessageListView,
     ExperienceDetailView,
     ExperienceListView,
     FunnelEventListView,
@@ -44,6 +45,11 @@ urlpatterns = [
     path("payments/<uuid:payment_id>/cancel/", PaymentCancelView.as_view(), name="ops-admin-payment-cancel"),
     path("webhook-events/", WebhookEventListView.as_view(), name="ops-admin-webhook-events"),
     path("funnel-events/", FunnelEventListView.as_view(), name="ops-admin-funnel-events"),
+    path(
+        "cart-recovery-messages/",
+        CartRecoveryMessageListView.as_view(),
+        name="ops-admin-cart-recovery-messages",
+    ),
     path("discounts/", PlanDiscountListView.as_view(), name="ops-admin-discounts"),
     path("discounts/<uuid:discount_id>/", PlanDiscountDeleteView.as_view(), name="ops-admin-discount-delete"),
     path("settings-snapshot/", SettingsSnapshotView.as_view(), name="ops-admin-settings-snapshot"),

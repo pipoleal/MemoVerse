@@ -481,12 +481,14 @@ ADMIN_EXPERIENCES_URL = "/api/ops/9b4/experiences/"
 ADMIN_PAYMENTS_URL = "/api/ops/9b4/payments/"
 ADMIN_WEBHOOK_EVENTS_URL = "/api/ops/9b4/webhook-events/"
 ADMIN_SETTINGS_URL = "/api/ops/9b4/settings-snapshot/"
+ADMIN_CART_RECOVERY_MESSAGES_URL = "/api/ops/9b4/cart-recovery-messages/"
 ADMIN_LIST_URLS = (
     ADMIN_USERS_URL,
     ADMIN_EXPERIENCES_URL,
     ADMIN_PAYMENTS_URL,
     ADMIN_WEBHOOK_EVENTS_URL,
     ADMIN_SETTINGS_URL,
+    ADMIN_CART_RECOVERY_MESSAGES_URL,
 )
 # Deliberadamente FORA de ADMIN_LIST_URLS: diferente das 5 rotas acima
 # (só GET), /discounts/ também aceita POST — misturá-la ali quebraria a
