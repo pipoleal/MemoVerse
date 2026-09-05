@@ -162,12 +162,12 @@ export function ExperienceProvider({
   // Derived, not stored: photoEntries/videoEntries are the single source of
   // truth for media. experience.photos/videos (consumed as-is by
   // ExperienceViewer for the 3D preview) are recomputed from them on every
-  // render instead of mirrored into state via an effect. photos carries
-  // {url, caption} (Fase 2.2) — videos stays plain URLs, unchanged.
+  // render instead of mirrored into state via an effect. Both carry
+  // {url, caption} (Fase 2.2, estendida a vídeo depois).
   const exposedExperience: Experience = {
     ...experience,
     photos: photoEntries.map((entry) => ({ url: entry.previewUrl, caption: entry.caption ?? "" })),
-    videos: videoEntries.map((entry) => entry.previewUrl),
+    videos: videoEntries.map((entry) => ({ url: entry.previewUrl, caption: entry.caption ?? "" })),
   };
 
   const ensureDraftId = useCallback((): Promise<string | null> => {

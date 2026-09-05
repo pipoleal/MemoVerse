@@ -1,10 +1,18 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FocusEvent } from "react";
 
 import FadeIn from "../../animations/FadeIn";
 import { useExperience, type MediaEntry } from "../context/ExperienceContext";
-import { deleteMediaFile, uploadMediaFile, validateFileForUpload } from "@/lib/mediaUpload";
+import {
+  deleteMediaFile,
+  uploadMediaFile,
+  updateMediaCaption,
+  validateFileForUpload,
+  MAX_CAPTION_LENGTH,
+} from "@/lib/mediaUpload";
+
+const CAPTION_PLACEHOLDER = "✏️ Adicione uma mensagem para este vídeo...";
 
 const MAX_VIDEOS = 3;
 
@@ -17,6 +25,7 @@ export default function VideosStep() {
   // See PhotosStep for why these are local to the component.
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
+  const [captionErrors, setCaptionErrors] = useState<Record<string, string>>({});
 
   async function runUpload(entryId: string, file: File) {
     const draftId = await ensureDraftId();
@@ -170,6 +179,37 @@ export default function VideosStep() {
     });
   }
 
+  // See PhotosStep.handleCaptionChange/handleCaptionBlur for the reasoning
+  // (state a cada tecla, PATCH só no blur).
+  function handleCaptionChange(entryId: string, value: string) {
+    setVideoEntries((current) =>
+      current.map((entry) => (entry.id === entryId ? { ...entry, caption: value } : entry))
+    );
+  }
+
+  async function handleCaptionBlur(entry: MediaEntry, event: FocusEvent<HTMLTextAreaElement>) {
+    if (!entry.mediaId) return;
+
+    setCaptionErrors((current) => {
+      if (!(entry.id in current)) return current;
+      const next = { ...current };
+      delete next[entry.id];
+      return next;
+    });
+
+    const draftId = await ensureDraftId();
+    if (!draftId) return;
+
+    try {
+      await updateMediaCaption(draftId, entry.mediaId, event.target.value);
+    } catch (error) {
+      setCaptionErrors((current) => ({
+        ...current,
+        [entry.id]: error instanceof Error ? error.message : "Não foi possível salvar a mensagem.",
+      }));
+    }
+  }
+
   const videosCount = videoEntries.length;
   const limitReached = videosCount >= MAX_VIDEOS;
 
@@ -277,7 +317,9 @@ export default function VideosStep() {
               </span>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {/* lg:grid-cols-2 (não -3): vídeo precisa de mais espaço que
+                foto pra não ficar minúsculo — cada card fica bem maior. */}
+            <div className="grid gap-6 md:grid-cols-2">
               {videoEntries.map((entry, index) => (
                 <div
                   key={entry.id}
@@ -373,6 +415,47 @@ export default function VideosStep() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Mesmo padrão de PhotosStep: só existe depois que o
+                        vídeo realmente terminou de subir (mediaId real). */}
+                    {entry.status === "uploaded" && (
+                      <div className="flex flex-col gap-1">
+                        <textarea
+                          value={entry.caption ?? ""}
+                          onChange={(event) => handleCaptionChange(entry.id, event.target.value)}
+                          onBlur={(event) => void handleCaptionBlur(entry, event)}
+                          placeholder={CAPTION_PLACEHOLDER}
+                          maxLength={MAX_CAPTION_LENGTH}
+                          rows={2}
+                          className="
+                            w-full
+                            resize-none
+                            rounded-xl
+                            border
+                            border-white/10
+                            bg-white/5
+                            px-3
+                            py-2
+                            text-xs
+                            leading-relaxed
+                            text-white
+                            outline-none
+                            placeholder:text-slate-500
+                            transition-all
+                            duration-300
+                            focus:border-yellow-400
+                            focus:bg-white/10
+                            focus:ring-2
+                            focus:ring-yellow-400/20
+                          "
+                        />
+                        {captionErrors[entry.id] && (
+                          <p className="text-[11px] text-red-300" aria-live="polite">
+                            {captionErrors[entry.id]}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

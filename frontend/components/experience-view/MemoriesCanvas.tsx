@@ -7,16 +7,14 @@ import PhotoMemoryBeat from "./PhotoMemoryBeat";
 import VideoMemoryBeat from "./VideoMemoryBeat";
 import { useInViewport } from "@/lib/useInViewport";
 import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
-import type { PhotoMemory } from "@/components/experience/types";
+import type { PhotoMemory, VideoMemory } from "@/components/experience/types";
 
 type MemoriesCanvasProps = {
   theme?: ThemeVisual;
   shortMessage: string;
-  // Fase 2.2: cada foto carrega sua própria legenda opcional — vídeo
-  // continua string[] (sem legenda nesta fase, ver VideoMemoryBeat.tsx,
-  // que não foi alterado).
+  // Fase 2.2: cada foto/vídeo carrega sua própria legenda opcional.
   photos: PhotoMemory[];
-  videos: string[];
+  videos: VideoMemory[];
   onComplete: () => void;
 };
 
@@ -73,7 +71,14 @@ export default function MemoriesCanvas({
       ))}
 
       {videos.map((video, index) => (
-        <VideoMemoryBeat key={`video-${index}`} theme={theme} src={video} index={index} total={videos.length} />
+        <VideoMemoryBeat
+          key={`video-${index}`}
+          theme={theme}
+          src={video.url}
+          caption={video.caption}
+          index={index}
+          total={videos.length}
+        />
       ))}
 
       {hasMedia && <div ref={sentinelRef} aria-hidden="true" className="h-24 w-full" />}

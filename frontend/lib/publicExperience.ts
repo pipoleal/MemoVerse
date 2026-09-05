@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { api } from "./api";
-import type { Experience, MusicProvider, PhotoMemory } from "@/components/experience/types";
+import type { Experience, MusicProvider, PhotoMemory, VideoMemory } from "@/components/experience/types";
 
 // Exactly the shape of apps.experiences.serializers.PublicExperienceSerializer
 // (GET /api/public/experiences/<slug>/) — no field invented beyond it.
@@ -11,10 +11,8 @@ type PublicMedia = {
   url: string;
   original_filename: string;
   sort_order: number;
-  // Fase 2.2: sempre string ("" quando não há legenda) — só usado para
-  // media_type "photo" (ver toExperience abaixo); vídeo ainda não tem
-  // legenda na UI, mas o campo já chega genericamente pra qualquer tipo de
-  // mídia, sem exigir uma segunda migration quando isso mudar.
+  // Fase 2.2: sempre string ("" quando não há legenda) — usado tanto para
+  // "photo" quanto "video" (ver toExperience abaixo).
   caption: string;
 };
 
@@ -69,7 +67,7 @@ export async function saveExperienceToGalaxy(slug: string): Promise<GalaxySaveRe
 // second/parallel type is created. Only renamed/reshaped where the public
 // API and the wizard's Experience genuinely disagree (snake_case API field
 // names, media as a flat list vs. Experience's separate photos/videos
-// string arrays); every value is either passed through as-is or dropped
+// arrays); every value is either passed through as-is or dropped
 // when Experience has no matching field (slug, published_at, media.id,
 // media.original_filename — none of them are read by ExperienceViewer).
 export function toExperience(data: PublicExperienceResponse): Experience {
@@ -77,16 +75,13 @@ export function toExperience(data: PublicExperienceResponse): Experience {
 
   // Defensive: an item with an empty/missing url is dropped instead of
   // being handed to <Image>/<video> as a broken src.
-  const urlsFor = (mediaType: PublicMedia["media_type"]) =>
+  const memoriesFor = (mediaType: PublicMedia["media_type"]) =>
     sortedMedia
       .filter((item) => item.media_type === mediaType && Boolean(item.url))
-      .map((item) => item.url);
+      .map((item) => ({ url: item.url, caption: item.caption }));
 
-  // Fase 2.2: photos carrega {url, caption} — videos continua string[]
-  // (urlsFor acima, inalterado) já que vídeo ainda não tem legenda na UI.
-  const photos: PhotoMemory[] = sortedMedia
-    .filter((item) => item.media_type === "photo" && Boolean(item.url))
-    .map((item) => ({ url: item.url, caption: item.caption }));
+  const photos: PhotoMemory[] = memoriesFor("photo");
+  const videos: VideoMemory[] = memoriesFor("video");
 
   return {
     type: data.experience_type,
@@ -98,7 +93,7 @@ export function toExperience(data: PublicExperienceResponse): Experience {
     // return null for a draft that somehow has no event_date.
     eventDate: data.event_date ?? "",
     photos,
-    videos: urlsFor("video"),
+    videos,
     letter: data.letter,
     shortMessage: data.short_message,
     contextAnswer: data.context_answer,

@@ -10,12 +10,19 @@ export interface MusicSelection {
   url: string;
 }
 
-// Fase 2.2: photos carrega uma legenda individual por foto — videos
-// continua string[] (mensagens em vídeo ficam para uma fase futura,
-// reaproveitando este mesmo shape sem quebrar nada aqui). caption é
-// sempre string (nunca undefined), "" representa "sem legenda", mesmo
-// padrão de shortMessage/contextAnswer.
+// Fase 2.2: cada foto/vídeo carrega uma legenda individual opcional.
+// caption é sempre string (nunca undefined), "" representa "sem legenda",
+// mesmo padrão de shortMessage/contextAnswer.
 export interface PhotoMemory {
+  url: string;
+  caption: string;
+}
+
+// Mesmo shape de PhotoMemory — dois tipos separados (em vez de um genérico
+// compartilhado) porque photos/videos já eram campos distintos em
+// Experience antes disso, e nada aqui precisa de um tipo comum além do
+// shape idêntico.
+export interface VideoMemory {
   url: string;
   caption: string;
 }
@@ -35,7 +42,7 @@ export interface Experience {
 
   photos: PhotoMemory[];
 
-  videos: string[];
+  videos: VideoMemory[];
 
   letter: string;
 
