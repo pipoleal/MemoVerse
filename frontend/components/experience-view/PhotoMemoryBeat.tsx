@@ -155,13 +155,32 @@ export default function PhotoMemoryBeat({
                 animate={{ scale: [1, 1.06] }}
                 transition={{ duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
               >
+                {/* Fundo: a mesma foto, ampliada e borrada, preenche o cartão
+                    inteiro atrás da versão nítida abaixo — puramente
+                    decorativo (aria-hidden), nunca a imagem "de verdade". */}
+                <Image
+                  src={src}
+                  alt=""
+                  aria-hidden="true"
+                  fill
+                  unoptimized
+                  sizes="(max-width: 768px) 100vw, 640px"
+                  className="scale-110 object-cover opacity-70 blur-2xl"
+                />
+
+                {/* Primeiro plano: a foto inteira, sem cortar nada. Troca o
+                    `object-cover` (que cortava fotos com proporção diferente
+                    da do cartão) por `object-contain` sobre o fundo borrado
+                    acima — a causa mais provável da sensação de "qualidade
+                    ruim": não era a foto perdendo resolução, era o crop
+                    levando embora um pedaço dela. */}
                 <Image
                   src={src}
                   alt={`Memória ${index + 1}`}
                   fill
                   unoptimized
                   sizes="(max-width: 768px) 100vw, 640px"
-                  className="object-cover"
+                  className="object-contain"
                 />
               </motion.div>
 

@@ -64,8 +64,13 @@ export default function VideoMemoryBeat({
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true, amount: 0.35 }}
             transition={{ duration: 0.8, ease: "easeOut" }}
-            className="relative aspect-video w-full overflow-hidden rounded-[1.5rem] border border-white/10 shadow-[0_30px_120px_rgba(0,0,0,0.6)]"
+            className="relative aspect-video w-full overflow-hidden rounded-[1.5rem] border border-white/10 bg-black/60 shadow-[0_30px_120px_rgba(0,0,0,0.6)]"
           >
+            {/* object-contain (em vez de object-cover): vídeo vertical
+                gravado no celular não fica mais cortado pra caber num
+                cartão 16:9 — sobra uma barra (letterbox) preenchida pelo
+                bg-black/60 do container acima, em vez de perder pedaço do
+                quadro. Mesmo raciocínio do crop de PhotoMemoryBeat.tsx. */}
             <video
               ref={videoRef}
               src={src}
@@ -74,7 +79,7 @@ export default function VideoMemoryBeat({
               playsInline
               controls
               preload="metadata"
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
 
             <span className="pointer-events-none absolute bottom-4 right-5 text-xs font-medium uppercase tracking-[0.3em] text-white/50">

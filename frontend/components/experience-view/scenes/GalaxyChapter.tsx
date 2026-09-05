@@ -10,6 +10,7 @@ import { getAccessToken } from "@/lib/storage";
 import { savePendingGalaxySave } from "@/lib/pendingGalaxySave";
 import { saveExperienceToGalaxy } from "@/lib/publicExperience";
 import GalaxyTransition from "../GalaxyTransition";
+import { useWebglContextRecovery } from "../useWebglContextRecovery";
 
 type GalaxyChapterProps = {
   onRevive: () => void;
@@ -47,6 +48,7 @@ type GalaxySavePhase =
 // which tears the Canvas down cleanly via react-three-fiber.
 export default function GalaxyChapter({ onRevive, isOwner, slug }: GalaxyChapterProps) {
   const router = useRouter();
+  const handleCreated = useWebglContextRecovery("GalaxyChapter");
 
   // Own entrance beat, independent of the theme (this chapter never reads
   // experience.theme — its identity is the Galaxy's own, not the
@@ -102,7 +104,7 @@ export default function GalaxyChapter({ onRevive, isOwner, slug }: GalaxyChapter
   return (
     <section className="relative min-h-screen w-full overflow-hidden bg-black">
       <div className="absolute inset-0">
-        <Canvas camera={{ position: [0, 0, 12], fov: 65 }}>
+        <Canvas camera={{ position: [0, 0, 12], fov: 65 }} onCreated={handleCreated}>
           <color attach="background" args={["#020617"]} />
           <ambientLight intensity={0.8} />
           <Stars radius={250} depth={80} count={12000} factor={6} saturation={0} fade speed={0.35} />

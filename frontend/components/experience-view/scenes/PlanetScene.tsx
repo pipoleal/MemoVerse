@@ -127,10 +127,6 @@ export default function PlanetScene({
    */
 
   function handleStart() {
-    console.log(
-      "MEMOVERSE: botão clicado"
-    );
-
     /*
      * FASE 1
      *

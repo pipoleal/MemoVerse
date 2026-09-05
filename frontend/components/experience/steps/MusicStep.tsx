@@ -575,14 +575,15 @@ export default function MusicStep() {
 
             <div>
               <h3 className="font-semibold text-white">
-                A música não será armazenada pelo MemoVerse
+                A música não é armazenada pelo MemoVerse
               </h3>
 
               <p className="mt-1 text-sm leading-6 text-slate-400">
-                Guardaremos apenas a plataforma e o link da
-                música. A integração com o serviço será feita
-                posteriormente através dos recursos oficiais da
-                plataforma.
+                Guardamos apenas a plataforma e o link da música — a
+                reprodução acontece direto pelo player oficial de cada
+                serviço (YouTube toca em segundo plano assim que a
+                experiência começa; Spotify e Apple Music aparecem como um
+                player visível, tocando a partir de um toque nele).
               </p>
             </div>
           </div>

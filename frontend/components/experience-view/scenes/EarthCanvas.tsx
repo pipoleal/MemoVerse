@@ -4,8 +4,11 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
 import Earth from "../Earth";
+import { useWebglContextRecovery } from "../useWebglContextRecovery";
 
 export default function EarthCanvas() {
+  const handleCreated = useWebglContextRecovery("EarthCanvas");
+
   return (
     <div className="absolute inset-0">
       <Canvas
@@ -17,6 +20,7 @@ export default function EarthCanvas() {
         gl={{
           antialias: true,
         }}
+        onCreated={handleCreated}
       >
         <directionalLight
           position={[5, 3, 5]}

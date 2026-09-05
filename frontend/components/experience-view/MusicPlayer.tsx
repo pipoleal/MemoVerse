@@ -3,32 +3,13 @@
 import { useEffect, useMemo, useRef } from "react";
 import YouTube from "react-youtube";
 
+import { extractYouTubeVideoId } from "@/lib/youtube";
+
 type MusicPlayerProps = {
   provider: string;
   url: string;
   playing: boolean;
 };
-
-function getYouTubeId(url: string) {
-  try {
-    const parsed = new URL(url);
-
-    if (parsed.hostname === "youtu.be") {
-      return parsed.pathname.replace("/", "");
-    }
-
-    if (
-      parsed.hostname === "youtube.com" ||
-      parsed.hostname === "www.youtube.com"
-    ) {
-      return parsed.searchParams.get("v");
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 // Spotify/Apple Music, ao contrário do YouTube acima, nunca ganham um
 // player invisível — os dois só oferecem embed oficial visível (Spotify
@@ -109,7 +90,7 @@ export default function MusicPlayer({
       return null;
     }
 
-    return getYouTubeId(url);
+    return extractYouTubeVideoId(url);
   }, [provider, url]);
 
   const spotifyEmbedUrl = useMemo(() => {
