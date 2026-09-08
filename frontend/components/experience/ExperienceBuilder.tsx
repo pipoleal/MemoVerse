@@ -57,6 +57,21 @@ export default function ExperienceBuilder() {
       return missingRequiredFieldError(experience);
     }
 
+    if (step === 7) {
+      // Etapa 7 (música): selecionar uma plataforma (YouTube/Spotify/Apple
+      // Music) preenche experience.music.provider na hora, mas
+      // experience.music.url só é preenchido quando o usuário clica
+      // "Confirmar música" (ver MusicStep.confirmMusic) — colar o link e
+      // seguir direto pra próxima etapa sem confirmar avançava em silêncio
+      // com provider setado e url vazia, descartando o link digitado e
+      // publicando a experiência sem música mesmo o cliente tendo escolhido
+      // uma. "none" nunca cai aqui: selectProvider/removeMusic já commitam
+      // {provider: "none", url: ""} na hora, sem exigir confirmação.
+      if (experience.music.provider !== "none" && !experience.music.url.trim()) {
+        return "Confirme o link da música (ou remova a seleção) para continuar.";
+      }
+    }
+
     return "";
   }
 
@@ -173,7 +188,7 @@ export default function ExperienceBuilder() {
 
         {step === 6 && <LetterStep />}
 
-        {step === 7 && <MusicStep />}
+        {step === 7 && <MusicStep error={error} />}
       </div>
 
       <NavigationButtons

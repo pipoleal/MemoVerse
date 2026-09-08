@@ -111,7 +111,11 @@ function validateMusicUrl(
   }
 }
 
-export default function MusicStep() {
+type MusicStepProps = {
+  error?: string;
+};
+
+export default function MusicStep({ error: navigationError }: MusicStepProps) {
   const { experience, updateExperience } = useExperience();
 
   const [selectedProvider, setSelectedProvider] =
@@ -274,6 +278,12 @@ export default function MusicStep() {
           Escolha uma música que tenha significado para essa
           história.
         </p>
+
+        {navigationError && (
+          <div className="mt-8 rounded-2xl border border-red-400/30 bg-red-400/10 px-5 py-4 text-sm text-red-200">
+            {navigationError}
+          </div>
+        )}
 
         {/* PLATAFORMAS */}
         <div className="mt-12 grid gap-5 md:grid-cols-2">
