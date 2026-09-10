@@ -296,19 +296,36 @@ class PublicExperienceView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
-        # slug inexistente, draft existente-mas-não-publicado E draft
-        # expirado caem todos no MESMO Http404 (a query exige as três
-        # condições de uma vez, dentro da MESMA chamada a
-        # get_object_or_404) — nunca uma mensagem ou status diferente que
-        # denunciasse qual dos três casos aconteceu, mesmo padrão de "nunca
-        # revelar existência" já usado em get_owned_draft_or_404.
+        # slug inexistente e draft existente-mas-não-publicado caem no MESMO
+        # Http404 (a query exige as duas condições de uma vez, dentro da
+        # MESMA chamada a get_object_or_404) — nunca uma mensagem ou status
+        # diferente que denunciasse qual dos dois casos aconteceu, mesmo
+        # padrão de "nunca revelar existência" já usado em
+        # get_owned_draft_or_404. Draft expirado é intencionalmente diferente
+        # (ver abaixo): quem já tinha esse link sabe que a experiência
+        # existiu, então dizer "expirou" não vaza nada de novo, e é o que
+        # permite ao frontend mostrar "seu plano expirou" em vez de um 404
+        # genérico indistinguível de link quebrado.
         draft = get_object_or_404(
             ExperienceDraft.objects.prefetch_related(
                 Prefetch("media", queryset=Media.objects.filter(upload_status=Media.UploadStatus.UPLOADED))
-            ).filter(Q(expires_at__isnull=True) | Q(expires_at__gte=timezone.now())),
+            ),
             slug=slug,
             status=ExperienceDraft.Status.PUBLISHED,
         )
+
+        if draft.expires_at is not None and draft.expires_at < timezone.now():
+            # 410 Gone (nunca 404): o recurso existiu e foi removido de
+            # circulação por expiração de plano, não por nunca ter existido
+            # — distinção que o frontend usa (ver
+            # frontend/lib/publicExperience.ts:isExpiredError) para trocar o
+            # "não encontrado" genérico por uma tela de "renove seu plano".
+            # Corpo deliberadamente mínimo: nenhuma mídia/carta/nome sai daqui,
+            # só o suficiente para o frontend decidir qual tela mostrar.
+            return Response(
+                {"detail": "Esta experiência expirou.", "code": "experience_expired"},
+                status=status.HTTP_410_GONE,
+            )
 
         media_items = []
         for media in draft.media.all():

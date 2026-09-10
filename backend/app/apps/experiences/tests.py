@@ -1167,8 +1167,11 @@ class PublicExperienceViewTests(TestCase):
 class PublicExperienceViewExpirationTests(TestCase):
     """Draft.expires_at=None (planos vitalícios, ou publicações antigas de
     antes desta feature) nunca expira — só um expires_at no passado bloqueia
-    o acesso. Mesmo tratamento de "nunca revelar existência" do resto desta
-    view: expirado vira o mesmíssimo 404 de slug inexistente."""
+    o acesso. Diferente do resto desta view (slug inexistente/não publicado,
+    que continuam um 404 genérico): expirado responde 410 Gone com um corpo
+    mínimo e distinguível, de propósito — ver o comentário em
+    PublicExperienceView.get. É o que permite ao frontend mostrar "seu plano
+    expirou, renove" em vez do 404 genérico de link quebrado."""
 
     def setUp(self):
         self.owner = make_user("owner@example.com")
@@ -1195,7 +1198,7 @@ class PublicExperienceViewExpirationTests(TestCase):
         response = self.client.get(public_url(draft.slug))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_draft_with_past_expires_at_returns_404(self):
+    def test_draft_with_past_expires_at_returns_410_with_expired_code(self):
         draft = make_draft(
             self.owner,
             status=ExperienceDraft.Status.PUBLISHED,
@@ -1204,9 +1207,10 @@ class PublicExperienceViewExpirationTests(TestCase):
             expires_at=timezone.now() - timedelta(days=1),
         )
         response = self.client.get(public_url(draft.slug))
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.status_code, status.HTTP_410_GONE)
+        self.assertEqual(response.data["code"], "experience_expired")
 
-    def test_expired_response_is_identical_to_nonexistent_slug(self):
+    def test_expired_response_is_distinguishable_from_nonexistent_slug(self):
         draft = make_draft(
             self.owner,
             status=ExperienceDraft.Status.PUBLISHED,
@@ -1216,8 +1220,25 @@ class PublicExperienceViewExpirationTests(TestCase):
         )
         response_expired = self.client.get(public_url(draft.slug))
         response_nonexistent = self.client.get(public_url("totally-made-up-slug-2"))
-        self.assertEqual(response_expired.status_code, response_nonexistent.status_code)
-        self.assertEqual(response_expired.data, response_nonexistent.data)
+        self.assertNotEqual(response_expired.status_code, response_nonexistent.status_code)
+
+    def test_expired_response_never_leaks_private_content(self):
+        # Corpo deliberadamente mínimo (ver PublicExperienceView.get): nem
+        # carta, nem mídia, nem nome de destinatário/criador saem depois que
+        # a experiência expirou.
+        draft = make_draft(
+            self.owner,
+            status=ExperienceDraft.Status.PUBLISHED,
+            slug="expired-slug-3",
+            published_at=timezone.now() - timedelta(days=8),
+            expires_at=timezone.now() - timedelta(days=1),
+            letter="Carta bem privada.",
+            recipient_name="Fulano",
+        )
+        response = self.client.get(public_url(draft.slug))
+        self.assertNotIn("letter", response.data)
+        self.assertNotIn("media", response.data)
+        self.assertNotIn("recipient_name", response.data)
 
 
 class DeleteObjectTests(TestCase):

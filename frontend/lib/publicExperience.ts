@@ -47,6 +47,16 @@ export function isNotFoundError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;
 }
 
+// 410 Gone: PublicExperienceView's deliberate distinction from 404 — the
+// experience existed and published, but its plan's expires_at has passed
+// (see the view's docstring). Whoever already had this link isn't told
+// anything new by "expirou" that a 404 would have hidden, so the frontend
+// uses this to show a "renove seu plano" screen instead of the generic
+// "não encontrada" one (see components/public/PublicExperienceView.tsx).
+export function isExpiredError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 410;
+}
+
 // POST /api/experiences/public/<slug>/save/ — "Criar minha Galáxia" (ver
 // GalaxyChapter.tsx). Requires auth (the interceptor in lib/api.ts already
 // attaches it); never sends anything beyond the slug already in the URL —
