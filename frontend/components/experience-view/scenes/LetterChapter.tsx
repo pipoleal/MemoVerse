@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getThemeVisual } from "@/lib/themeRegistry";
 
+import ThemeGlyph from "../theme/ThemeGlyph";
+
 type LetterChapterProps = {
   recipient: string;
   creator: string;
@@ -43,6 +45,21 @@ function formatEventDate(eventDate: string) {
   }).format(date);
 }
 
+// Última linha curta da carta ("Te amo.", "Com amor, sempre") vira o
+// fechamento em destaque do layout, em itálico na cor do tema. Cartas sem
+// uma linha assim ficam exatamente como foram escritas.
+function splitClosing(letter: string) {
+  const lines = letter.trimEnd().split("\n");
+  const last = lines[lines.length - 1]?.trim() ?? "";
+  const body = lines.slice(0, -1).join("\n").trimEnd();
+
+  if (body && last.length > 0 && last.length <= 40) {
+    return { body, closing: last };
+  }
+
+  return { body: letter.trimEnd(), closing: null };
+}
+
 export default function LetterChapter({
   recipient,
   creator,
@@ -56,10 +73,12 @@ export default function LetterChapter({
   const [isVisible, setIsVisible] = useState(false);
   const [showContinue, setShowContinue] = useState(false);
 
-  const letterTheme = useMemo(
-    () => getThemeVisual(theme).letter,
+  const tokens = useMemo(
+    () => getThemeVisual(theme).experience,
     [theme]
   );
+
+  const { body, closing } = useMemo(() => splitClosing(letter), [letter]);
 
   const formattedEventDate = useMemo(
     () => formatEventDate(eventDate),
@@ -82,139 +101,105 @@ export default function LetterChapter({
   }, []);
 
   return (
-    // Sem scroll interno (pedido explícito): esta section não é mais
+    // Sem scroll interno (pedido explícito): esta section não é
     // `absolute inset-0` — é um bloco normal (`relative min-h-screen`) que
     // cresce com o conteúdo, deixando quem rola ser a PÁGINA (body), nunca
-    // uma div própria aqui dentro. As 4 decorações abaixo (glow, as duas
-    // ornament-lines e o vignette final) viram `fixed` em vez de
-    // `absolute`: como não são mais relativas a uma section de altura fixa
-    // (ela agora pode ficar bem mais alta que uma viewport numa carta
-    // grande), `fixed` é o que as mantém como pano de fundo ambiente preso
-    // à tela, em vez de esticar/repetir ao longo de toda a altura da
-    // section.
+    // uma div própria aqui dentro. O fundo do tema fica `fixed` atrás para
+    // não esticar/repetir ao longo de uma carta grande.
     <section
       aria-label={`Carta para ${recipient}`}
-      className={`relative min-h-screen w-full overflow-x-hidden text-white ${letterTheme.backdropClass}`}
+      className="relative min-h-screen w-full overflow-x-hidden"
     >
-      <div
-        className={`pointer-events-none fixed left-1/2 top-0 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl ${letterTheme.glowClass}`}
-      />
+      <div aria-hidden="true" className="mv-bg-soft pointer-events-none fixed inset-0" />
 
-      <div
-        className={`pointer-events-none fixed left-[12%] top-[22%] h-px w-24 ${letterTheme.ornamentClass}`}
-      />
-
-      <div
-        className={`pointer-events-none fixed bottom-[18%] right-[10%] h-24 w-24 rounded-full border ${letterTheme.ornamentClass}`}
-      />
-
-      <div className="relative flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
+      <div className="relative flex min-h-screen items-center justify-center px-5 py-12 sm:px-8">
         <article
           className={`
-            w-full max-w-3xl rounded-[2rem] border p-7 shadow-[0_30px_100px_rgba(0,0,0,0.45)] backdrop-blur-xl
-            transition-all duration-[1400ms] ease-out sm:p-10 md:p-14
-            ${letterTheme.cardClass}
-            ${
-              isVisible
-                ? "translate-y-0 scale-100 opacity-100"
-                : `${letterTheme.entryClass} opacity-0`
-            }
+            mv-glass w-full max-w-2xl px-7 py-10 sm:px-12 sm:py-14
+            transition-[opacity,transform] duration-1400 ease-out
+            ${isVisible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"}
           `}
         >
           <header className="text-center">
-            <p
-              className={`text-xs font-medium uppercase tracking-[0.35em] sm:tracking-[0.45em] ${letterTheme.secondaryClass}`}
-            >
+            <p className="mv-label leading-loose">
               Uma mensagem especial para
             </p>
 
-            <h1
-              className={`mt-4 break-words text-4xl font-light tracking-wide sm:text-5xl md:text-6xl ${letterTheme.primaryClass}`}
-            >
+            <h1 className="mv-serif mt-3 wrap-break-word text-[clamp(3.25rem,15vw,5.5rem)] italic leading-[1.05] text-(--mv-accent-soft)">
               {recipient}
             </h1>
 
             {formattedEventDate && (
               <time
                 dateTime={eventDate}
-                className={`mt-4 block text-sm ${letterTheme.secondaryClass}`}
+                className="mt-4 block text-sm text-(--mv-accent-soft) opacity-90"
               >
                 {formattedEventDate}
               </time>
             )}
+
+            <div aria-hidden="true" className="mv-divider mx-auto mt-6 w-48">
+              <ThemeGlyph kind={tokens.divider} className="h-5 w-5" />
+            </div>
           </header>
 
-          <div
-            aria-hidden="true"
-            className={`mx-auto my-8 h-px w-16 ${letterTheme.ornamentClass}`}
-          />
-
-          {/* Segunda pergunta contextual do wizard (contextAnswer) — mesmo
-              vocabulário visual do cabeçalho acima (rótulo pequeno em
-              uppercase) e do corpo da carta logo abaixo (mesma classe de
-              texto), nunca um estilo à parte. Rótulo é a própria pergunta
-              (contextQuestion, resolvida em ExperienceViewer a partir de
-              informationStepConfig.ts) — nunca uma frase genérica; o
-              fallback abaixo só existe para um contextQuestion ausente
-              (nunca deveria acontecer para um tipo com contextAnswer, mas
-              nunca deixa o rótulo em branco). Só existe quando o usuário de
-              fato respondeu. wrap-anywhere (não break-words): uma sequência
-              contínua sem espaços precisa poder quebrar mesmo dentro do
-              item flex do card, o que break-word sozinho não garante. */}
+          {/* Segunda pergunta contextual do wizard (contextAnswer). Rótulo é a
+              própria pergunta (contextQuestion, resolvida em ExperienceViewer
+              a partir de informationStepConfig.ts) — o fallback abaixo só
+              existe para um contextQuestion ausente. Só existe quando o
+              usuário de fato respondeu. wrap-anywhere (não wrap-break-word): uma
+              sequência contínua sem espaços precisa poder quebrar mesmo
+              dentro do card. */}
           {contextAnswer && (
-            <div className="mb-8">
-              <p
-                className={`text-xs font-medium uppercase tracking-[0.35em] sm:tracking-[0.45em] ${letterTheme.secondaryClass}`}
-              >
-                {contextQuestion ?? "Uma coisa que torna isso ainda mais especial"}
+            <div className="mt-10">
+              <p className="flex items-start gap-3">
+                <ThemeGlyph kind="heart" className="mt-0.5 h-5 w-5 shrink-0" />
+                <span className="mv-label font-semibold leading-relaxed text-(--mv-accent)">
+                  {contextQuestion ?? "Uma coisa que torna isso ainda mais especial"}
+                </span>
               </p>
 
-              <p
-                className={`mt-3 whitespace-pre-wrap wrap-anywhere text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
-              >
+              <p className="mv-serif mt-4 whitespace-pre-wrap wrap-anywhere text-[1.25rem] leading-[1.8] text-(--mv-text) sm:text-[1.35rem]">
                 {contextAnswer}
               </p>
             </div>
           )}
 
-          {/* Sem scroll interno (pedido explícito): antes limitado a
-              max-h-[min(48vh,28rem)] com overflow-y-auto próprio — agora o
-              texto flui na altura real que precisar, e é a página (não
-              mais uma caixa interna) que rola quando isso ultrapassa a
-              viewport. */}
+          {/* Sem scroll interno (pedido explícito): o texto flui na altura
+              real que precisar, e é a página que rola. */}
           <p
-            className={`whitespace-pre-wrap wrap-anywhere text-base leading-8 sm:text-lg sm:leading-9 ${letterTheme.textClass}`}
+            className={`mv-serif whitespace-pre-wrap wrap-anywhere text-[1.25rem] leading-[1.8] text-(--mv-text) sm:text-[1.35rem] ${contextAnswer ? "mt-8" : "mt-10"}`}
           >
-            {letter}
+            {body}
           </p>
 
+          {closing && (
+            <p className="mv-serif mt-4 flex items-center gap-2 wrap-break-word text-[2.5rem] italic leading-tight text-(--mv-accent)">
+              {closing}
+              <ThemeGlyph kind={tokens.divider} className="h-6 w-6 shrink-0" />
+            </p>
+          )}
+
           {creator && (
-            <footer className="mt-8 border-t border-white/10 pt-6 text-right">
-              <p className={`text-sm ${letterTheme.secondaryClass}`}>
+            <footer className="mt-10 border-t border-white/15 pt-6 text-right">
+              <p className="mv-label">
                 Com carinho,
               </p>
-              <p className={`mt-1 text-lg ${letterTheme.primaryClass}`}>
+              <p className="mv-serif mt-2 text-2xl italic text-(--mv-text)">
                 {creator}
               </p>
             </footer>
           )}
 
-          <div className="mt-8 flex justify-center">
+          <div className="mt-10 flex justify-center">
             <button
               type="button"
               onClick={onComplete}
               disabled={!showContinue}
               aria-hidden={!showContinue}
               className={`
-                min-h-11 rounded-full border px-5 py-2 text-sm font-medium tracking-wide
-                transition-all duration-500 focus-visible:outline-2 focus-visible:outline-offset-4
-                ${letterTheme.ornamentClass}
-                ${letterTheme.primaryClass}
-                ${
-                  showContinue
-                    ? "translate-y-0 opacity-100 hover:bg-white/10"
-                    : "pointer-events-none translate-y-2 opacity-0"
-                }
+                mv-pill transition-[opacity,transform] duration-500
+                ${showContinue ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"}
               `}
             >
               Continuar <span aria-hidden="true">→</span>
@@ -222,8 +207,6 @@ export default function LetterChapter({
           </div>
         </article>
       </div>
-
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_center,transparent_30%,rgba(0,0,0,0.65)_100%)]" />
     </section>
   );
 }

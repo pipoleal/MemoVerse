@@ -1,224 +1,117 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import Image from "next/image";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion } from "framer-motion";
 
 import { useInViewport } from "@/lib/useInViewport";
-import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
+import { fetchPublicExperience, toExperience } from "@/lib/publicExperience";
+
+import MemoryFrame from "./MemoryFrame";
 
 type PhotoMemoryBeatProps = {
-  // Opcional com fallback pro tema padrão — mesmo padrão de
-  // VideoMemoryBeat.tsx (o outro "beat" de MemoriesCanvas.tsx). Estilo da
-  // legenda (abaixo) vem daqui: nunca uma cor genérica fixa, sempre a
-  // identidade visual do tema escolhido pelo dono da experiência.
-  theme?: ThemeVisual;
   src: string;
   // Fase 2.2: opcional — "" (ou ausente) não reserva nenhum espaço visual,
   // a foto renderiza exatamente como antes desta mudança.
   caption?: string;
+  // Posição dentro de photos[] — usada para achar a URL renovada abaixo.
   index: number;
-  total: number;
+  // Posição/total entre todas as memórias (fotos + vídeos), só para
+  // exibição — ver MemoryFrame.tsx.
+  memoryNumber: number;
+  memoryCount: number;
+  onNavigate: (slide: number) => void;
+  // Slug público da experiência — só o suficiente para reemitir GET
+  // /public/experiences/<slug>/ e pegar uma URL assinada nova caso `src`
+  // (assinada no carregamento inicial da página) já tenha expirado quando o
+  // visitante finalmente rola até esta foto (carta longa, app trocado no
+  // celular, aba em segundo plano...). undefined no modo wizard/preview —
+  // lá, sem link público ainda, uma foto que falhar simplesmente continua
+  // quebrada (mesmo comportamento de antes desta mudança).
+  slug?: string;
 };
-
-type Composition = {
-  align: "center" | "left" | "right";
-  rotate: number;
-  aspect: string;
-  glowClass: string;
-  glowColor: string;
-  parallaxRange: [number, number];
-};
-
-/*
- * Pequeno conjunto de composições que se repete ciclicamente (index % length).
- * Não é "10 layouts diferentes" — é uma variação natural sobre a mesma
- * linguagem visual (vinheta escura, brilho ambiente, poeira estelar).
- */
-const COMPOSITIONS: Composition[] = [
-  {
-    align: "center",
-    rotate: 0,
-    aspect: "aspect-[4/5]",
-    glowClass: "left-1/2 top-0 -translate-x-1/2 -translate-y-1/3",
-    glowColor: "bg-indigo-400/20",
-    parallaxRange: [30, -30],
-  },
-  {
-    align: "left",
-    rotate: -2,
-    aspect: "aspect-[3/4]",
-    glowClass: "-left-16 top-1/4",
-    glowColor: "bg-amber-300/15",
-    parallaxRange: [42, -18],
-  },
-  {
-    align: "right",
-    rotate: 2,
-    aspect: "aspect-[3/4]",
-    glowClass: "-right-16 bottom-1/4",
-    glowColor: "bg-cyan-300/15",
-    parallaxRange: [18, -42],
-  },
-  {
-    align: "center",
-    rotate: 0,
-    aspect: "aspect-video",
-    glowClass: "left-1/2 bottom-0 -translate-x-1/2 translate-y-1/3",
-    glowColor: "bg-rose-300/15",
-    parallaxRange: [24, -24],
-  },
-];
-
-const DUST = [
-  ["18%", "22%", "0s", "2.6s"],
-  ["78%", "16%", "0.6s", "3.1s"],
-  ["12%", "82%", "1.1s", "2.9s"],
-  ["84%", "78%", "0.4s", "3.4s"],
-] as const;
 
 export default function PhotoMemoryBeat({
-  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
   src,
   caption,
   index,
-  total,
+  memoryNumber,
+  memoryCount,
+  onNavigate,
+  slug,
 }: PhotoMemoryBeatProps) {
-  const sectionRef = useRef<HTMLDivElement | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
 
-  const { isInView: isNear } = useInViewport<HTMLDivElement>(
+  const { isInView: isNear } = useInViewport<HTMLElement>(
     { rootMargin: "55% 0px", threshold: 0, once: true },
     sectionRef
   );
 
-  const composition = COMPOSITIONS[index % COMPOSITIONS.length];
+  // Renovação da URL assinada expirada — ver comentário de `slug` acima.
+  // `currentSrc` começa como a URL original e só é trocada se ela de fato
+  // falhar; `hasRetriedRef` garante no máximo uma tentativa por foto (uma
+  // segunda falha após a renovação é um problema real, não mais expiração).
+  const [currentSrc, setCurrentSrc] = useState(src);
+  const hasRetriedRef = useRef(false);
 
-  const { scrollYProgress } = useScroll({
-    target: sectionRef,
-    offset: ["start end", "end start"],
-  });
+  async function handleImageError() {
+    if (hasRetriedRef.current || !slug) return;
+    hasRetriedRef.current = true;
 
-  const imageY = useTransform(scrollYProgress, [0, 1], composition.parallaxRange);
-  const glowY = useTransform(
-    scrollYProgress,
-    [0, 1],
-    [composition.parallaxRange[0] * 0.4, composition.parallaxRange[1] * 0.4]
-  );
-
-  const justify =
-    composition.align === "left"
-      ? "justify-start"
-      : composition.align === "right"
-        ? "justify-end"
-        : "justify-center";
+    try {
+      const fresh = await fetchPublicExperience(slug);
+      const renewedUrl = toExperience(fresh).photos[index]?.url;
+      if (renewedUrl) setCurrentSrc(renewedUrl);
+    } catch {
+      // Sem conexão ou slug não encontra mais a experiência — a foto
+      // continua quebrada, mesmo estado de antes desta mudança.
+    }
+  }
 
   return (
-    <section
+    <MemoryFrame
       ref={sectionRef}
-      aria-label={`Memória ${index + 1} de ${total}`}
-      className="relative flex min-h-screen w-full items-center overflow-hidden px-6 py-24 sm:px-12"
+      ariaLabel={`Memória ${memoryNumber + 1} de ${memoryCount}`}
+      memoryNumber={memoryNumber}
+      memoryCount={memoryCount}
+      caption={caption}
+      onNavigate={onNavigate}
+      isNear={isNear}
     >
+      {/* Leve aproximação contínua (Ken Burns), só transform. */}
       <motion.div
-        aria-hidden="true"
-        style={{ y: glowY }}
-        className={`pointer-events-none absolute h-72 w-72 rounded-full blur-3xl ${composition.glowClass} ${composition.glowColor}`}
-      />
-
-      {DUST.map(([left, top, delay, duration], dustIndex) => (
-        <span
-          key={`${left}-${top}`}
+        className="absolute inset-0"
+        animate={{ scale: [1, 1.05] }}
+        transition={{ duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
+      >
+        {/* Fundo: a mesma foto, ampliada e borrada, preenche a moldura
+            inteira atrás da versão nítida — é ela que substitui as barras
+            pretas numa foto vertical/horizontal que não tem a proporção da
+            moldura. Puramente decorativa (aria-hidden). */}
+        <Image
+          src={currentSrc}
+          alt=""
           aria-hidden="true"
-          className="star pointer-events-none absolute h-1 w-1 rounded-full bg-white/70"
-          style={{
-            left,
-            top,
-            animationDelay: delay,
-            animationDuration: duration,
-            opacity: dustIndex % 2 === 0 ? 0.6 : 0.4,
-          }}
+          fill
+          unoptimized
+          sizes="(max-width: 768px) 100vw, 448px"
+          className="scale-110 object-cover opacity-80 blur-2xl"
         />
-      ))}
 
-      <div className={`relative flex w-full ${justify}`}>
-        {isNear && (
-          <div className="flex w-full max-w-xl flex-col items-center gap-10">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94, filter: "blur(6px)" }}
-              whileInView={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-              viewport={{ once: true, amount: 0.4 }}
-              transition={{ duration: 0.9, ease: "easeOut" }}
-              style={{ y: imageY, rotate: composition.rotate }}
-              className={`relative w-full overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_30px_100px_rgba(0,0,0,0.55)] ${composition.aspect}`}
-            >
-              <motion.div
-                className="relative h-full w-full"
-                animate={{ scale: [1, 1.06] }}
-                transition={{ duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
-              >
-                {/* Fundo: a mesma foto, ampliada e borrada, preenche o cartão
-                    inteiro atrás da versão nítida abaixo — puramente
-                    decorativo (aria-hidden), nunca a imagem "de verdade". */}
-                <Image
-                  src={src}
-                  alt=""
-                  aria-hidden="true"
-                  fill
-                  unoptimized
-                  sizes="(max-width: 768px) 100vw, 640px"
-                  className="scale-110 object-cover opacity-70 blur-2xl"
-                />
+        {/* Primeiro plano: a foto inteira, sem cortar nada (object-contain
+            sobre o fundo borrado acima). */}
+        <Image
+          src={currentSrc}
+          alt={caption ? `Memória ${memoryNumber + 1}: ${caption}` : `Memória ${memoryNumber + 1}`}
+          fill
+          unoptimized
+          sizes="(max-width: 768px) 100vw, 448px"
+          className="object-contain"
+          onError={handleImageError}
+        />
+      </motion.div>
 
-                {/* Primeiro plano: a foto inteira, sem cortar nada. Troca o
-                    `object-cover` (que cortava fotos com proporção diferente
-                    da do cartão) por `object-contain` sobre o fundo borrado
-                    acima — a causa mais provável da sensação de "qualidade
-                    ruim": não era a foto perdendo resolução, era o crop
-                    levando embora um pedaço dela. */}
-                <Image
-                  src={src}
-                  alt={`Memória ${index + 1}`}
-                  fill
-                  unoptimized
-                  sizes="(max-width: 768px) 100vw, 640px"
-                  className="object-contain"
-                />
-              </motion.div>
-
-              <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/50 via-transparent to-black/10" />
-
-              <span className="pointer-events-none absolute bottom-4 right-5 text-xs font-medium uppercase tracking-[0.3em] text-white/50">
-                {String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}
-              </span>
-            </motion.div>
-
-            {/* Fase 2.2: legenda individual — nunca sobreposta à foto (é uma
-                irmã abaixo, não um overlay), e nunca uma legenda genérica de
-                galeria: pertence só a esta foto. Sem texto, nenhum espaço
-                extra é reservado.
-                Cartão com a mesma linguagem do tema escolhido (ornamentClass/
-                textClass, os mesmos tokens que LetterChapter já usa) — nunca
-                mais um texto solto colado embaixo da foto, sem contraste com
-                o fundo. gap-10 no container acima dá o respiro entre foto e
-                legenda, e px-8/py-5/leading-loose aqui evitam o texto
-                grudado nas bordas do cartão. */}
-            {caption && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.4 }}
-                transition={{ duration: 0.8, delay: 0.25, ease: "easeOut" }}
-                className={`w-fit max-w-[85%] rounded-2xl border px-8 py-5 text-center backdrop-blur-sm ${theme.letter.ornamentClass}`}
-              >
-                <p
-                  className={`wrap-anywhere text-sm italic leading-loose tracking-wide sm:text-base ${theme.letter.textClass}`}
-                >
-                  {caption}
-                </p>
-              </motion.div>
-            )}
-          </div>
-        )}
-      </div>
-    </section>
+      <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/35 via-transparent to-black/10" />
+    </MemoryFrame>
   );
 }

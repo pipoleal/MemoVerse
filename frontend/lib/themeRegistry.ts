@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 // Single source of visual implementation for every experience theme —
 // replaces the three previously-duplicated dictionaries (StyleStep's own
 // `styles` list, lib/themeVisuals.ts, experience-view/scenes/letter-theme.ts).
@@ -48,6 +50,43 @@ export type ThemeVisual = {
     glowClass: string;
     entryClass: string;
   };
+  // Redesign "Fluxo da experiência" (as 7 telas da experiência pública):
+  // os componentes são os mesmos para todos os temas — só o "clima" muda,
+  // e ele vive inteiro aqui. `tokens` vira variáveis CSS aplicadas na raiz
+  // do ExperienceViewer (ver experienceThemeStyle abaixo) e é consumido
+  // pelas classes `.mv-*` de app/globals.css; partículas, selo da carta,
+  // glifo do divisor e ornamento da Abertura são só tipos resolvidos por
+  // ThemeParticles/ThemeGlyph/ThemeOrnament.
+  experience: ExperienceThemeTokens;
+};
+
+export type ParticleKind = "petals" | "shooting-stars" | "projector-dust" | "sun-glints" | "fireflies" | "dots";
+export type GlyphKind = "heart" | "blossom" | "star" | "sparkle" | "clapper" | "shell" | "moon" | "dot";
+export type OrnamentKind = "cherry-branch" | "crescent-moon" | "none";
+
+export type ExperienceThemeTokens = {
+  palette: {
+    // Fundo base (no Flores: "vinho-noite" #2A0816).
+    night: string;
+    // Tons de fundo do degradê (no Flores: vinho, magenta e violeta).
+    deep: string;
+    strong: string;
+    secondary: string;
+    // Cor de destaque do tema e sua versão clara (no Flores: rosa
+    // destaque e pétala).
+    accent: string;
+    accentSoft: string;
+    // Detalhes pontuais (datas, a palavra "estrela").
+    gold: string;
+    text: string;
+    // As duas pontas do degradê do planeta da tela Começar.
+    planetLight: string;
+    planetDark: string;
+  };
+  particles: ParticleKind;
+  seal: GlyphKind;
+  divider: GlyphKind;
+  ornament: OrnamentKind;
 };
 
 export const DEFAULT_THEME_CODE = "universe";
@@ -73,6 +112,24 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       glowClass: "bg-indigo-400/20",
       entryClass: "translate-y-8",
     },
+    experience: {
+      palette: {
+        night: "#0B0620",
+        deep: "#2A1260",
+        strong: "#4C1D95",
+        secondary: "#1E1B4B",
+        accent: "#B58CFF",
+        accentSoft: "#DCC8FF",
+        gold: "#FFD76A",
+        text: "#F4F0FF",
+        planetLight: "#8B5CF6",
+        planetDark: "#1E0B4A",
+      },
+      particles: "shooting-stars",
+      seal: "star",
+      divider: "sparkle",
+      ornament: "none",
+    },
   },
   cinema: {
     code: "cinema",
@@ -93,6 +150,24 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       ornamentClass: "border-amber-200/30 bg-amber-200/10",
       glowClass: "bg-amber-300/20",
       entryClass: "translate-y-10 scale-[0.98]",
+    },
+    experience: {
+      palette: {
+        night: "#0A0705",
+        deep: "#3D1F0A",
+        strong: "#7A3A10",
+        secondary: "#2A1408",
+        accent: "#FF8A3D",
+        accentSoft: "#FFC79E",
+        gold: "#FFD76A",
+        text: "#FFF4EA",
+        planetLight: "#E0702A",
+        planetDark: "#2A1206",
+      },
+      particles: "projector-dust",
+      seal: "clapper",
+      divider: "dot",
+      ornament: "none",
     },
   },
   beach: {
@@ -115,6 +190,24 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       glowClass: "bg-cyan-300/20",
       entryClass: "translate-y-7",
     },
+    experience: {
+      palette: {
+        night: "#03131D",
+        deep: "#0C3A52",
+        strong: "#16708A",
+        secondary: "#7A4A5A",
+        accent: "#FFC48A",
+        accentSoft: "#FFE2C2",
+        gold: "#FFD76A",
+        text: "#F2FBFF",
+        planetLight: "#2BB3C8",
+        planetDark: "#06293A",
+      },
+      particles: "sun-glints",
+      seal: "shell",
+      divider: "shell",
+      ornament: "none",
+    },
   },
   flowers: {
     code: "flowers",
@@ -135,6 +228,24 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       ornamentClass: "border-rose-100/25 bg-rose-100/10",
       glowClass: "bg-rose-300/20",
       entryClass: "translate-y-8 scale-[0.99]",
+    },
+    experience: {
+      palette: {
+        night: "#2A0816",
+        deep: "#7A0030",
+        strong: "#A8004F",
+        secondary: "#7A1580",
+        accent: "#FF9CC4",
+        accentSoft: "#FFC2D9",
+        gold: "#FFD76A",
+        text: "#FFF0F6",
+        planetLight: "#E0207A",
+        planetDark: "#3A0828",
+      },
+      particles: "petals",
+      seal: "heart",
+      divider: "blossom",
+      ornament: "cherry-branch",
     },
   },
   night: {
@@ -157,6 +268,24 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       glowClass: "bg-slate-300/15",
       entryClass: "translate-y-9",
     },
+    experience: {
+      palette: {
+        night: "#050814",
+        deep: "#0F1A3A",
+        strong: "#1E2F5E",
+        secondary: "#2A1F4F",
+        accent: "#FFC857",
+        accentSoft: "#FFE3A8",
+        gold: "#FFD76A",
+        text: "#F3F6FF",
+        planetLight: "#3B5BA8",
+        planetDark: "#070C22",
+      },
+      particles: "fireflies",
+      seal: "moon",
+      divider: "moon",
+      ornament: "crescent-moon",
+    },
   },
   minimal: {
     code: "minimal",
@@ -178,8 +307,45 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       glowClass: "bg-white/10",
       entryClass: "translate-y-6",
     },
+    experience: {
+      palette: {
+        night: "#0A0A0C",
+        deep: "#1A1A1F",
+        strong: "#2A2A31",
+        secondary: "#202028",
+        accent: "#F4F0FF",
+        accentSoft: "#FFFFFF",
+        gold: "#F4F0FF",
+        text: "#FFFFFF",
+        planetLight: "#5A5A66",
+        planetDark: "#0E0E12",
+      },
+      particles: "dots",
+      seal: "dot",
+      divider: "dot",
+      ornament: "none",
+    },
   },
 };
+
+// Variáveis CSS do tema para a raiz da experiência pública — as classes
+// `.mv-*` de app/globals.css só leem estas variáveis, nunca uma cor fixa,
+// então trocar de tema é só trocar este objeto.
+export function experienceThemeStyle(visual: ThemeVisual): CSSProperties {
+  const { palette } = visual.experience;
+  return {
+    "--mv-night": palette.night,
+    "--mv-deep": palette.deep,
+    "--mv-strong": palette.strong,
+    "--mv-secondary": palette.secondary,
+    "--mv-accent": palette.accent,
+    "--mv-accent-soft": palette.accentSoft,
+    "--mv-gold": palette.gold,
+    "--mv-text": palette.text,
+    "--mv-planet-light": palette.planetLight,
+    "--mv-planet-dark": palette.planetDark,
+  } as CSSProperties;
+}
 
 // Unknown/legacy/empty code (a draft mid-wizard, or an old value no longer
 // in the active catalog) never errors and never renders unstyled — always

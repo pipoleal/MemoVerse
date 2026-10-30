@@ -1,109 +1,124 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { useRef, useState } from "react";
 
 import { useInViewport } from "@/lib/useInViewport";
-import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
+import { fetchPublicExperience, toExperience } from "@/lib/publicExperience";
+
+import MemoryFrame from "./MemoryFrame";
 
 type VideoMemoryBeatProps = {
-  theme?: ThemeVisual;
   src: string;
   // Fase 2.2 (estendida a vídeo): opcional — "" (ou ausente) não reserva
   // nenhum espaço visual, mesmo padrão de PhotoMemoryBeat.tsx.
   caption?: string;
+  // Posição dentro de videos[] — usada para achar a URL renovada abaixo.
   index: number;
-  total: number;
+  // Ver os mesmos parâmetros em PhotoMemoryBeat.tsx.
+  memoryNumber: number;
+  memoryCount: number;
+  onNavigate: (slide: number) => void;
+  // Ver o mesmo parâmetro em PhotoMemoryBeat.tsx — usado aqui pela mesma
+  // razão (renovar a URL assinada se ela expirar antes do clique em play).
+  slug?: string;
 };
 
 export default function VideoMemoryBeat({
-  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
   src,
   caption,
   index,
-  total,
+  memoryNumber,
+  memoryCount,
+  onNavigate,
+  slug,
 }: VideoMemoryBeatProps) {
-  const sectionRef = useRef<HTMLDivElement | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const { isInView: isNear } = useInViewport<HTMLDivElement>(
+  const { isInView: isNear } = useInViewport<HTMLElement>(
     { rootMargin: "55% 0px", threshold: 0, once: true },
     sectionRef
   );
 
-  const { isInView: isPlaying } = useInViewport<HTMLDivElement>(
-    { rootMargin: "0px", threshold: 0.6 },
-    sectionRef
-  );
+  // Vídeo só toca quando o visitante clica — nunca sozinho ao entrar na
+  // viewport. Antes disso tocava automaticamente (mudo) a partir de 60% de
+  // visibilidade: mesmo mudo, iniciar a reprodução de um <video> rouba o
+  // foco de áudio da sessão em navegadores mobile (Safari/iOS em
+  // particular), pausando a música de fundo (YouTube/Spotify/Apple Music
+  // em MusicPlayer.tsx) sem nenhuma ação do visitante — o próprio bug
+  // relatado. Reproduzir só a partir de um clique explícito evita esse
+  // roubo de foco automático.
+  const [hasStarted, setHasStarted] = useState(false);
 
-  useEffect(() => {
+  const [currentSrc, setCurrentSrc] = useState(src);
+  const hasRetriedRef = useRef(false);
+
+  async function handleVideoError() {
+    if (hasRetriedRef.current || !slug) return;
+    hasRetriedRef.current = true;
+
+    try {
+      const fresh = await fetchPublicExperience(slug);
+      const renewedUrl = toExperience(fresh).videos[index]?.url;
+      if (renewedUrl) setCurrentSrc(renewedUrl);
+    } catch {
+      // Sem conexão ou slug não encontra mais a experiência — o vídeo
+      // continua quebrado, mesmo estado de antes desta mudança.
+    }
+  }
+
+  function handlePlayClick() {
     const video = videoRef.current;
     if (!video) return;
-
-    if (isPlaying) {
-      video.play().catch(() => {
-        // autoplay pode ser bloqueado pelo navegador; os controles nativos continuam disponíveis.
-      });
-    } else {
-      video.pause();
-    }
-  }, [isPlaying]);
+    video.play().catch(() => {
+      // Bloqueado pelo navegador apesar do clique (raro) — os controles
+      // nativos, já visíveis a partir daqui, continuam disponíveis.
+    });
+    setHasStarted(true);
+  }
 
   return (
-    <section
+    <MemoryFrame
       ref={sectionRef}
-      aria-label={`Vídeo ${index + 1} de ${total}`}
-      className={`relative flex min-h-screen w-full items-center justify-center overflow-hidden px-6 py-24 ${theme.gradient}`}
+      ariaLabel={`Memória ${memoryNumber + 1} de ${memoryCount} (vídeo)`}
+      memoryNumber={memoryNumber}
+      memoryCount={memoryCount}
+      caption={caption}
+      onNavigate={onNavigate}
+      isNear={isNear}
+      hideCounter={hasStarted}
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(20,30,60,0.25),transparent_60%)]" />
+      {/* object-contain (em vez de object-cover): vídeo vertical gravado no
+          celular não fica cortado pra caber na moldura — sobra o fundo
+          escuro translúcido da moldura, em vez de perder pedaço do quadro.
+          controls só aparece depois do primeiro clique — antes disso o
+          botão de play abaixo é o único controle visível, pra não duplicar
+          (nosso botão + o de play nativo). */}
+      <video
+        ref={videoRef}
+        src={currentSrc}
+        loop
+        playsInline
+        controls={hasStarted}
+        preload="metadata"
+        onError={handleVideoError}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
 
-      {isNear && (
-        <div className="flex w-full max-w-5xl flex-col items-center gap-8">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true, amount: 0.35 }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-            className="relative aspect-video w-full overflow-hidden rounded-[1.5rem] border border-white/10 bg-black/60 shadow-[0_30px_120px_rgba(0,0,0,0.6)]"
-          >
-            {/* object-contain (em vez de object-cover): vídeo vertical
-                gravado no celular não fica mais cortado pra caber num
-                cartão 16:9 — sobra uma barra (letterbox) preenchida pelo
-                bg-black/60 do container acima, em vez de perder pedaço do
-                quadro. Mesmo raciocínio do crop de PhotoMemoryBeat.tsx. */}
-            <video
-              ref={videoRef}
-              src={src}
-              muted
-              loop
-              playsInline
-              controls
-              preload="metadata"
-              className="h-full w-full object-contain"
-            />
-
-            <span className="pointer-events-none absolute bottom-4 right-5 text-xs font-medium uppercase tracking-[0.3em] text-white/50">
-              {String(index + 1).padStart(2, "0")} / {String(total).padStart(2, "0")}
-            </span>
-          </motion.div>
-
-          {/* Mesma linguagem visual da legenda de PhotoMemoryBeat.tsx —
-              nunca sobreposta ao vídeo, sem texto não reserva espaço. */}
-          {caption && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.4 }}
-              transition={{ duration: 0.8, delay: 0.25, ease: "easeOut" }}
-              className={`w-fit max-w-[85%] rounded-2xl border px-8 py-5 text-center backdrop-blur-sm ${theme.letter.ornamentClass}`}
-            >
-              <p className={`wrap-anywhere text-sm italic leading-loose tracking-wide sm:text-base ${theme.letter.textClass}`}>
-                {caption}
-              </p>
-            </motion.div>
-          )}
-        </div>
+      {!hasStarted && (
+        <button
+          type="button"
+          onClick={handlePlayClick}
+          aria-label="Reproduzir vídeo"
+          className="mv-focus absolute inset-0 flex items-center justify-center bg-black/20 transition-colors hover:bg-black/5"
+        >
+          <span className="flex h-16 w-16 items-center justify-center rounded-full border border-(--mv-accent) bg-white/15 text-white shadow-lg backdrop-blur-md transition-transform hover:scale-105">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="ml-1 h-7 w-7">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </span>
+        </button>
       )}
-    </section>
+    </MemoryFrame>
   );
 }

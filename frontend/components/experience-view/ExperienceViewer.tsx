@@ -1,21 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 
 import { useOptionalExperience } from "../experience/context/ExperienceContext";
 import { getInformationStepConfig } from "../experience/informationStepConfig";
 import type { Experience } from "../experience/types";
-import { getThemeVisual } from "@/lib/themeRegistry";
+import { experienceThemeStyle, getThemeVisual } from "@/lib/themeRegistry";
+import { experienceSerif } from "@/lib/experienceFonts";
 
 import GalaxyChapter from "./scenes/GalaxyChapter";
+import PreviewChapter from "./scenes/PreviewChapter";
 import LetterChapter from "./scenes/LetterChapter";
 import PlanetScene from "./scenes/PlanetScene";
 import RecipientRevealChapter from "./scenes/RecipientRevealChapter";
 import MemoriesCanvas from "./MemoriesCanvas";
 import MusicPlayer from "./MusicPlayer";
+import ThemeParticles from "./theme/ThemeParticles";
 
 export type ExperienceChapter =
+  | "preview"
   | "idle"
   | "signature-opening"
   | "recipient-reveal"
@@ -25,6 +29,7 @@ export type ExperienceChapter =
   | "completed";
 
 type ExperienceRuntimeEvent =
+  | "PREVIEW_COMPLETE"
   | "START_EXPERIENCE"
   | "SIGNATURE_COMPLETE"
   | "RECIPIENT_COMPLETE"
@@ -69,7 +74,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
   const experience = experienceProp ?? context?.experience;
 
   const [chapter, setChapter] =
-    useState<ExperienceChapter>("idle");
+    useState<ExperienceChapter>("preview");
   const [hasInteracted, setHasInteracted] = useState(false);
   // Bumped by "Reviver experiência" only, to force MusicPlayer to remount so
   // its YouTube player restarts from 0 instead of resuming where it left
@@ -82,6 +87,10 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
 
   const send = useCallback((event: ExperienceRuntimeEvent) => {
     setChapter((currentChapter) => {
+      if (event === "PREVIEW_COMPLETE" && currentChapter === "preview") {
+        return "idle";
+      }
+
       if (event === "START_EXPERIENCE" && currentChapter === "idle") {
         return "signature-opening";
       }
@@ -139,13 +148,24 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
     chapter === "idle" ||
     chapter === "signature-opening";
 
-  // Resolved once here and handed only to the two surfaces that were ever
-  // themed to begin with (Memórias/Fotos and a Carta) — the opening,
-  // revelação and encerramento keep MemoVerse's shared spatial identity
-  // regardless of theme; see MemoriesCanvas/LetterChapter below.
+  // Redesign "Fluxo da experiência": todas as 7 telas (Prévia → Fotos) são
+  // do tema agora — os tokens viram variáveis CSS na raiz (<main> abaixo) e
+  // cada capítulo só lê essas variáveis. Só o encerramento (GalaxyChapter)
+  // continua com a identidade espacial própria do MemoVerse.
   // Unknown/legacy/empty theme values never break this — getThemeVisual()
   // always falls back to a complete definition (see lib/themeRegistry.ts).
   const visual = getThemeVisual(experience.theme);
+  const tokens = visual.experience;
+  const hasMusic = experience.music.provider !== "none" && Boolean(experience.music.url);
+
+  // Partículas do tema (pétalas no Flores...) em todas as telas, menos na
+  // abertura cósmica (Começar, que já tem o próprio campo de estrelas) e no
+  // encerramento WebGL.
+  const showParticles =
+    chapter === "preview" ||
+    chapter === "recipient-reveal" ||
+    chapter === "letter" ||
+    chapter === "memories";
 
   // Polimento do Preview — Problema 2: a pergunta mostrada junto da resposta
   // em LetterChapter é sempre a mesma pergunta que InformationStep já exibiu
@@ -165,120 +185,157 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
     // RecipientRevealChapter/GalaxyChapter/MemoriesCanvas), e o capítulo da
     // carta precisa poder crescer além de uma viewport sem ser cortado
     // aqui.
-    <main className="relative min-h-screen w-full bg-black">
-      <MusicPlayer
-        key={reviveCount}
-        provider={experience.music.provider}
-        url={experience.music.url}
-        playing={hasInteracted}
-      />
+    // MotionConfig reducedMotion="user": toda animação framer-motion abaixo
+    // respeita prefers-reduced-motion sem precisar checar em cada capítulo.
+    <MotionConfig reducedMotion="user">
+      <main
+        className={`mv-root relative min-h-screen w-full bg-black ${experienceSerif.variable}`}
+        style={experienceThemeStyle(visual)}
+      >
+        <MusicPlayer
+          key={reviveCount}
+          provider={experience.music.provider}
+          url={experience.music.url}
+          playing={hasInteracted}
+        />
 
-      <AnimatePresence mode="sync" initial={false}>
-        {isSignatureChapter && (
-          <motion.div
-            key="opening"
-            className="absolute inset-0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={CHAPTER_TRANSITION}
-          >
-            <PlanetScene
-              onStart={() => {
-                setHasInteracted(true);
-                send("START_EXPERIENCE");
-              }}
-              onStarsComplete={() => {
-                send("SIGNATURE_COMPLETE");
-              }}
-              started={chapter === "signature-opening"}
-            />
-          </motion.div>
-        )}
+        {showParticles && <ThemeParticles kind={tokens.particles} />}
 
-        {chapter === "recipient-reveal" && (
-          <motion.div
-            key="recipient-reveal"
-            className="absolute inset-0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={CHAPTER_TRANSITION}
-          >
-            <RecipientRevealChapter
-              title={experience.title || "Nossa história"}
-              recipient={experience.recipient || "Você"}
-              onComplete={() => {
-                send("RECIPIENT_COMPLETE");
-              }}
-            />
-          </motion.div>
-        )}
+        <AnimatePresence mode="sync" initial={false}>
+          {chapter === "preview" && (
+            <motion.div
+              key="preview"
+              // Rola por conta própria se o cartão não couber numa tela
+              // pequena (celular deitado).
+              className="absolute inset-0 overflow-y-auto"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={CHAPTER_TRANSITION}
+            >
+              <PreviewChapter
+                recipient={experience.recipient || "Você"}
+                letter={experience.letter}
+                seal={tokens.seal}
+                divider={tokens.divider}
+                onContinue={() => {
+                  send("PREVIEW_COMPLETE");
+                }}
+              />
+            </motion.div>
+          )}
 
-        {chapter === "letter" && (
-          <motion.div
-            key="letter"
-            // Etapa do scroll do Preview: único capítulo que NÃO é
-            // `absolute inset-0` (todos os outros continuam pinados
-            // exatamente a uma viewport, sem scroll, de propósito — nada
-            // muda neles). Este precisa participar do fluxo normal do
-            // documento para que uma carta grande empurre a altura real de
-            // `main`/da página, em vez de ficar preso a uma altura fixa.
-            className="relative w-full"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={CHAPTER_TRANSITION}
-          >
-            <LetterChapter
-              recipient={experience.recipient || "Você"}
-              creator={experience.creator}
-              letter={experience.letter}
-              theme={experience.theme}
-              eventDate={experience.eventDate}
-              contextAnswer={experience.contextAnswer}
-              contextQuestion={contextQuestion}
-              onComplete={() => {
-                send("LETTER_COMPLETE");
-              }}
-            />
-          </motion.div>
-        )}
+          {isSignatureChapter && (
+            <motion.div
+              key="opening"
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={CHAPTER_TRANSITION}
+            >
+              <PlanetScene
+                onStart={() => {
+                  setHasInteracted(true);
+                  send("START_EXPERIENCE");
+                }}
+                onStarsComplete={() => {
+                  send("SIGNATURE_COMPLETE");
+                }}
+                started={chapter === "signature-opening"}
+                hasMusic={hasMusic}
+              />
+            </motion.div>
+          )}
 
-        {chapter === "memories" && (
-          <motion.div
-            key="memories"
-            className="absolute inset-0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={CHAPTER_TRANSITION}
-          >
-            <MemoriesCanvas
-              theme={visual}
-              shortMessage={experience.shortMessage}
-              photos={experience.photos}
-              videos={experience.videos}
-              onComplete={() => {
-                send("MEMORIES_COMPLETE");
-              }}
-            />
-          </motion.div>
-        )}
+          {chapter === "recipient-reveal" && (
+            <motion.div
+              key="recipient-reveal"
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={CHAPTER_TRANSITION}
+            >
+              <RecipientRevealChapter
+                title={experience.title || "Nossa história"}
+                recipient={experience.recipient || "Você"}
+                ornament={tokens.ornament}
+                divider={tokens.divider}
+                onComplete={() => {
+                  send("RECIPIENT_COMPLETE");
+                }}
+              />
+            </motion.div>
+          )}
 
-        {chapter === "completed" && (
-          <motion.div
-            key="completed"
-            className="absolute inset-0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={CHAPTER_TRANSITION}
-          >
-            <GalaxyChapter onRevive={handleRevive} isOwner={isOwner} slug={slug} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </main>
+          {chapter === "letter" && (
+            <motion.div
+              key="letter"
+              // Etapa do scroll do Preview: único capítulo que NÃO é
+              // `absolute inset-0` (todos os outros continuam pinados
+              // exatamente a uma viewport, sem scroll, de propósito — nada
+              // muda neles). Este precisa participar do fluxo normal do
+              // documento para que uma carta grande empurre a altura real de
+              // `main`/da página, em vez de ficar preso a uma altura fixa.
+              className="relative w-full"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={CHAPTER_TRANSITION}
+            >
+              <LetterChapter
+                recipient={experience.recipient || "Você"}
+                creator={experience.creator}
+                letter={experience.letter}
+                theme={experience.theme}
+                eventDate={experience.eventDate}
+                contextAnswer={experience.contextAnswer}
+                contextQuestion={contextQuestion}
+                onComplete={() => {
+                  send("LETTER_COMPLETE");
+                }}
+              />
+            </motion.div>
+          )}
+
+          {chapter === "memories" && (
+            <motion.div
+              key="memories"
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={CHAPTER_TRANSITION}
+            >
+              <MemoriesCanvas
+                shortMessage={experience.shortMessage}
+                recipient={experience.recipient || "Você"}
+                eventDate={experience.eventDate}
+                photos={experience.photos}
+                videos={experience.videos}
+                slug={slug}
+                onComplete={() => {
+                  send("MEMORIES_COMPLETE");
+                }}
+              />
+            </motion.div>
+          )}
+
+          {chapter === "completed" && (
+            <motion.div
+              key="completed"
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={CHAPTER_TRANSITION}
+            >
+              <GalaxyChapter onRevive={handleRevive} isOwner={isOwner} slug={slug} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+    </MotionConfig>
   );
 }

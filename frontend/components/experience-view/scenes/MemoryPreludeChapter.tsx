@@ -1,119 +1,127 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-import { DEFAULT_THEME_CODE, THEME_REGISTRY, type ThemeVisual } from "@/lib/themeRegistry";
+import type { CSSProperties } from "react";
 
 type MemoryPreludeChapterProps = {
-  theme?: ThemeVisual;
   message?: string;
+  recipient: string;
+  // Mesmo eventDate do wizard ("AAAA-MM-DD") — só o ano é usado, grande ao
+  // fundo. Vazio/ inválido simplesmente não mostra ano nenhum.
+  eventDate?: string;
+  // Sem nenhuma foto/vídeo não há o que rolar (MemoriesCanvas avança
+  // sozinho), então a dica "Role para ver as memórias" não aparece.
+  hasMedia: boolean;
 };
 
 const defaultPreludeMessage =
   "Uma mensagem especial aparecerá aqui.";
 
-const particles = [
-  ["12%", "-20%", "0.2s"],
-  ["-18%", "-9%", "0.55s"],
-  ["26%", "8%", "0.9s"],
-  ["-30%", "18%", "1.2s"],
-  ["5%", "30%", "1.55s"],
-  ["-8%", "-32%", "1.8s"],
-] as const;
+function delay(ms: number) {
+  return { "--mv-delay": `${ms}ms` } as CSSProperties;
+}
 
+// Tela "Cena": duas estrelas (você e o destinatário) orbitando, o ano em
+// que a história começou ao fundo e a mensagem curta do wizard
+// (shortMessage) centralizada. Tudo em CSS (transform/opacity) — a órbita
+// gira o "braço" inteiro e cada rótulo gira ao contrário para continuar
+// na horizontal.
 export default function MemoryPreludeChapter({
-  theme = THEME_REGISTRY[DEFAULT_THEME_CODE],
   message,
+  recipient,
+  eventDate,
+  hasMedia,
 }: MemoryPreludeChapterProps) {
-  const [showMessage, setShowMessage] = useState(false);
-  const [showHint, setShowHint] = useState(false);
-
-  useEffect(() => {
-    const messageTimer = window.setTimeout(() => setShowMessage(true), 4600);
-    const hintTimer = window.setTimeout(() => setShowHint(true), 5400);
-
-    return () => {
-      window.clearTimeout(messageTimer);
-      window.clearTimeout(hintTimer);
-    };
-  }, []);
+  const year = /^\d{4}/.exec(eventDate ?? "")?.[0];
 
   return (
     <section
-      aria-label="O nascimento de uma nova estrela"
-      className={`memory-prelude relative isolate flex min-h-screen w-full items-center justify-center overflow-hidden text-white ${theme.gradient}`}
+      aria-label="O começo da nossa história"
+      className="mv-bg-dark relative isolate flex flex-1 flex-col items-center overflow-hidden px-6 pb-8 pt-[10vh] text-center"
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(29,45,85,0.22)_0%,rgba(2,4,10,0)_44%,#02040a_82%)]" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-[38%] -z-10 h-[130vw] max-h-[60rem] w-[130vw] max-w-[60rem] -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle, color-mix(in srgb, var(--mv-strong) 55%, transparent) 0%, color-mix(in srgb, var(--mv-secondary) 30%, transparent) 40%, transparent 70%)",
+        }}
+      />
 
-      <div className="star-system pointer-events-none absolute left-1/2 top-1/2 h-0 w-0">
-        <div className="star-illumination absolute left-1/2 top-1/2 h-[75vmax] w-[75vmax] -translate-x-1/2 -translate-y-1/2 rounded-full" />
-        <div className="star-halo absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 rounded-full" />
-        <div className="star-core absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full" />
-
-        {particles.map(([x, y, delay], index) => (
-          <span
-            key={`${x}-${y}`}
-            className="star-particle absolute left-1/2 top-1/2 h-1 w-1 rounded-full bg-[#dce9ff]"
-            style={{
-              "--particle-x": x,
-              "--particle-y": y,
-              animationDelay: delay,
-              opacity: index % 2 === 0 ? 0.75 : 0.5,
-            } as React.CSSProperties}
-          />
-        ))}
-      </div>
-
-      <div className="absolute inset-0 z-20 flex h-full flex-col items-center justify-end px-6 pb-16 text-center sm:pb-20">
-        {showMessage && (
-          <div className="max-w-md animate-[message-arrive_1400ms_ease-out_both]">
-            <p className="text-lg font-light leading-relaxed tracking-wide text-white/80 sm:text-xl">
-              {message || defaultPreludeMessage}
-            </p>
-          </div>
+      <div aria-hidden="true" className="mv-rise relative aspect-square w-[min(82vw,22rem)]">
+        {year && (
+          <span className="mv-serif pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-[clamp(8rem,42vw,15rem)] leading-none text-white/[0.07]">
+            {year}
+          </span>
         )}
 
-        {showHint && (
-          <p className="mt-10 animate-[message-arrive_700ms_ease-out_both] text-xs uppercase tracking-[0.4em] text-white/40">
-            <span className="inline-block animate-bounce motion-reduce:animate-none" aria-hidden="true">
-              ↓
-            </span>
-            <span className="ml-3">role para ver as memórias</span>
-          </p>
-        )}
+        <div className="absolute inset-0 rounded-full border border-white/10" />
+
+        <div className="mv-pulse absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--mv-accent)_45%,transparent)_0%,transparent_70%)]" />
+
+        {/* Braço da órbita: anel interno + rastros + as duas estrelas. */}
+        <div className="mv-orbit absolute inset-[11%]">
+          <svg viewBox="-100 -100 200 200" className="absolute inset-0 h-full w-full overflow-visible">
+            <circle r="99" fill="none" stroke="#fff" strokeOpacity="0.28" />
+            <path
+              d="M 0 -99 A 99 99 0 0 0 -85.7 -49.5"
+              fill="none"
+              stroke="var(--mv-accent-soft)"
+              strokeOpacity="0.7"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeDasharray="0.1 6"
+            />
+            <path
+              d="M 0 99 A 99 99 0 0 0 85.7 49.5"
+              fill="none"
+              stroke="#fff"
+              strokeOpacity="0.6"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeDasharray="0.1 6"
+            />
+          </svg>
+
+          <OrbitStar position="top" label={recipient} color="#dfe3ff" />
+          <OrbitStar position="bottom" label="você" color="#ffffff" />
+        </div>
       </div>
 
-      <style jsx>{`
-        .star-system { animation: awaken 4.6s cubic-bezier(0.16, 1, 0.3, 1) both; }
-        .star-core {
-          background: #fffdf2;
-          box-shadow: 0 0 8px 2px rgba(255, 250, 220, 0.95), 0 0 32px 10px rgba(189, 211, 255, 0.52), 0 0 90px 28px rgba(105, 142, 255, 0.18);
-          animation: core-born 4.6s cubic-bezier(0.16, 1, 0.3, 1) both, core-pulse 3.6s 4.6s ease-in-out infinite;
-        }
-        .star-halo {
-          border: 1px solid rgba(209, 225, 255, 0.26);
-          box-shadow: inset 0 0 32px rgba(177, 204, 255, 0.1), 0 0 56px rgba(133, 169, 255, 0.18);
-          animation: halo-born 4.6s cubic-bezier(0.16, 1, 0.3, 1) both;
-        }
-        .star-illumination {
-          background: radial-gradient(circle, rgba(189, 213, 255, 0.14) 0%, rgba(128, 162, 255, 0.05) 21%, transparent 55%);
-          animation: illuminate 4.6s ease-out both;
-        }
-        .star-particle {
-          box-shadow: 0 0 8px 2px rgba(205, 222, 255, 0.8);
-          animation: particle-appear 2.1s ease-out both;
-        }
-        @keyframes awaken { from { opacity: 0; } 18% { opacity: 1; } to { opacity: 1; } }
-        @keyframes core-born { 0%, 16% { transform: translate(-50%, -50%) scale(0.2); opacity: 0; } 31% { transform: translate(-50%, -50%) scale(0.8); opacity: 1; } 52% { transform: translate(-50%, -50%) scale(0.55); } 78%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
-        @keyframes core-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.3); } }
-        @keyframes halo-born { 0%, 30% { transform: translate(-50%, -50%) scale(0.12); opacity: 0; } 66% { opacity: 0.55; } 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.35; } }
-        @keyframes illuminate { 0%, 28% { opacity: 0; } 100% { opacity: 1; } }
-        @keyframes particle-appear { 0%, 20% { transform: translate(-50%, -50%) scale(0); opacity: 0; } 100% { transform: translate(var(--particle-x), var(--particle-y)) scale(1); opacity: inherit; } }
-        @keyframes message-arrive { from { transform: translateY(0.75rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        @media (prefers-reduced-motion: reduce) {
-          .star-system, .star-core, .star-halo, .star-illumination, .star-particle { animation-duration: 0.01ms; animation-iteration-count: 1; }
-        }
-      `}</style>
+      <p
+        className="mv-serif mv-rise mt-10 max-w-md whitespace-pre-wrap wrap-anywhere text-[1.45rem] leading-[1.6] text-(--mv-text) sm:text-[1.65rem]"
+        style={delay(500)}
+      >
+        {message || defaultPreludeMessage}
+      </p>
+
+      {hasMedia && (
+        <p className="mv-rise mt-auto flex flex-col items-center gap-3 pt-10" style={delay(1300)}>
+          <span className="mv-label">Role para ver as memórias</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true" className="mv-nudge h-5 w-5 text-(--mv-accent)">
+            <path d="m6 6 6 6 6-6M6 12l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </p>
+      )}
     </section>
+  );
+}
+
+function OrbitStar({ position, label, color }: { position: "top" | "bottom"; label: string; color: string }) {
+  return (
+    <div
+      className={`absolute left-1/2 h-4 w-4 -translate-x-1/2 ${position === "top" ? "-top-2" : "-bottom-2"}`}
+    >
+      {/* Gira ao contrário do braço: o rótulo continua sempre na horizontal. */}
+      <div className="mv-orbit-reverse relative h-full w-full">
+        <span
+          className="mv-pulse absolute -inset-4 rounded-full"
+          style={{ background: `radial-gradient(circle, ${color}66 0%, transparent 70%)` }}
+        />
+        <span className="absolute inset-0 rounded-full" style={{ background: color, boxShadow: `0 0 12px ${color}` }} />
+        <span className="mv-serif absolute left-[calc(100%+0.5rem)] top-1/2 -translate-y-1/2 whitespace-nowrap text-lg italic text-(--mv-accent-soft)">
+          {label}
+        </span>
+      </div>
+    </div>
   );
 }

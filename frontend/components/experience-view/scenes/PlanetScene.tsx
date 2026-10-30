@@ -7,7 +7,8 @@ import {
 } from "react";
 
 import StarField from "../StarField";
-import EarthCanvas from "./EarthCanvas";
+import ThemeGlyph from "../theme/ThemeGlyph";
+import ThemePlanet from "../theme/ThemePlanet";
 
 type StarFieldPhase =
   | "idle"
@@ -19,18 +20,18 @@ type PlanetSceneProps = {
   onStart: () => void;
   onStarsComplete?: () => void;
   started?: boolean;
+  // Só mostra "Ative o som..." quando há de fato uma música configurada.
+  hasMusic?: boolean;
 };
 
 export default function PlanetScene({
   onStart,
   onStarsComplete,
   started = false,
+  hasMusic = false,
 }: PlanetSceneProps) {
   const [showPhrase, setShowPhrase] =
     useState(false);
-
-  const [phraseStep, setPhraseStep] =
-    useState(0);
 
   const [showButton, setShowButton] =
     useState(false);
@@ -59,37 +60,20 @@ export default function PlanetScene({
    * ==========================================
    */
 
+  // Antes a frase esperava ~6,5s pela entrada da Terra em WebGL; o planeta
+  // agora é SVG (ThemePlanet) e já está na tela, e a Prévia vem antes —
+  // então a frase e o botão entram logo, só com o fade com subida.
   useEffect(() => {
     const phraseTimer = setTimeout(() => {
       setShowPhrase(true);
-    }, 6500);
-
-    const word1 = setTimeout(() => {
-      setPhraseStep(1);
-    }, 6800);
-
-    const word2 = setTimeout(() => {
-      setPhraseStep(2);
-    }, 7400);
-
-    const word3 = setTimeout(() => {
-      setPhraseStep(3);
-    }, 8000);
-
-    const word4 = setTimeout(() => {
-      setPhraseStep(4);
-    }, 8600);
+    }, 700);
 
     const buttonTimer = setTimeout(() => {
       setShowButton(true);
-    }, 9800);
+    }, 1900);
 
     return () => {
       clearTimeout(phraseTimer);
-      clearTimeout(word1);
-      clearTimeout(word2);
-      clearTimeout(word3);
-      clearTimeout(word4);
       clearTimeout(buttonTimer);
     };
   }, []);
@@ -179,7 +163,7 @@ export default function PlanetScene({
   }
 
   return (
-    <section className="relative min-h-screen w-full overflow-hidden bg-black">
+    <section className="mv-bg-dark relative min-h-screen w-full overflow-hidden">
 
       {/* =========================================
           ESTRELAS
@@ -190,43 +174,36 @@ export default function PlanetScene({
       </div>
 
       {/* =========================================
-          TERRA
+          PLANETA DO TEMA
           ========================================= */}
 
       <div
         className={`
           pointer-events-none
           absolute
-          inset-0
+          inset-x-0
+          top-[4vh]
+          bottom-[44%]
           z-10
-          transition-all
-          duration-2200ms
+          flex
+          items-center
+          justify-center
+          transition-[opacity,transform]
+          duration-2200
           ease-in-out
           ${
-            starPhase === "idle"
+            starPhase === "idle" || starPhase === "transition"
               ? "scale-100 opacity-100"
-              : starPhase === "transition"
-                ? "scale-100 opacity-100"
-                : "scale-[0.92] opacity-0"
+              : "scale-[0.92] opacity-0"
           }
         `}
       >
-        <EarthCanvas />
+        {/* Altura limitada à metade de cima da tela: em telas baixas o
+            planeta encolhe em vez de ficar atrás da frase. */}
+        <div className="aspect-[520/460] h-full max-h-[27rem] max-w-full">
+          <ThemePlanet />
+        </div>
       </div>
-
-      {/* =========================================
-          VINHETA
-          ========================================= */}
-
-      <div
-        className="
-          pointer-events-none
-          absolute
-          inset-0
-          z-20
-          bg-[radial-gradient(circle_at_center,transparent_30%,rgba(0,0,0,0.7)_100%)]
-        "
-      />
 
       {/* =========================================
           CONTEÚDO INICIAL
@@ -240,9 +217,9 @@ export default function PlanetScene({
           flex
           items-end
           justify-center
-          pb-[10vh]
-          transition-all
-          duration-1200ms
+          pb-[8vh]
+          transition-[opacity,transform]
+          duration-1200
           ease-out
           ${
             started
@@ -251,104 +228,29 @@ export default function PlanetScene({
           }
         `}
       >
-        <div className="flex flex-col items-center px-6 text-center">
-
-          {/* FRASE */}
-
-          <div
-            className={`
-              max-w-3xl
-              transition-all
-              duration-1500ms
-              ease-out
-              ${
-                showPhrase
-                  ? "translate-y-0 opacity-100"
-                  : "translate-y-8 opacity-0"
-              }
-            `}
-          >
-            <p
-              className="
-                text-2xl
-                font-light
-                leading-relaxed
-                tracking-wide
-                text-white
-                md:text-4xl
-              "
-            >
-              <span
-                className={`
-                  inline-block
-                  transition-all
-                  duration-700
-                  ${
-                    phraseStep >= 1
-                      ? "translate-y-0 opacity-100"
-                      : "translate-y-3 opacity-0"
-                  }
-                `}
-              >
-                Toda
-              </span>{" "}
-
-              <span
-                className={`
-                  inline-block
-                  transition-all
-                  duration-700
-                  ${
-                    phraseStep >= 2
-                      ? "translate-y-0 opacity-100"
-                      : "translate-y-3 opacity-0"
-                  }
-                `}
-              >
-                memória
-              </span>{" "}
-
-              <span
-                className={`
-                  inline-block
-                  transition-all
-                  duration-700
-                  ${
-                    phraseStep >= 3
-                      ? "translate-y-0 opacity-100"
-                      : "translate-y-3 opacity-0"
-                  }
-                `}
-              >
-                se transforma em uma
-              </span>{" "}
-
-              <span
-                className={`
-                  inline-block
-                  font-medium
-                  text-yellow-200
-                  transition-all
-                  duration-1000
-                  ${
-                    phraseStep >= 4
-                      ? "scale-100 translate-y-0 opacity-100"
-                      : "scale-90 translate-y-3 opacity-0"
-                  }
-                `}
-              >
-                estrela. ⭐
+        <div className="flex w-full max-w-lg flex-col items-center px-6 text-center">
+          {showPhrase && (
+            <p className="mv-serif mv-rise text-[min(2.35rem,5.4vh)] leading-[1.15] text-(--mv-text) sm:text-[min(2.85rem,5.4vh)]">
+              Toda memória
+              <br />
+              se transforma em uma
+              <br />
+              <span className="inline-flex items-center gap-3 italic text-(--mv-gold)">
+                estrela.
+                <ThemeGlyph kind="sparkle" className="mv-pulse h-7 w-7" />
               </span>
             </p>
-          </div>
-
-          {/* BOTÃO */}
+          )}
 
           <div
             className={`
-              pointer-events-auto
-              transition-all
-              duration-1400ms
+              mt-[min(2.5rem,4vh)]
+              flex
+              w-full
+              flex-col
+              items-center
+              transition-[opacity,transform]
+              duration-1000
               ease-out
               ${
                 showButton
@@ -360,33 +262,22 @@ export default function PlanetScene({
             <button
               type="button"
               onClick={handleStart}
-              className="
-                mt-8
-                cursor-pointer
-                rounded-full
-                border
-                border-white/20
-                bg-white/10
-                px-8
-                py-4
-                text-sm
-                font-semibold
-                uppercase
-                tracking-[0.25em]
-                text-white
-                backdrop-blur-md
-                transition-all
-                duration-500
-                hover:scale-105
-                hover:border-yellow-300/60
-                hover:bg-yellow-300/10
-                hover:text-yellow-200
-              "
+              disabled={!showButton || started}
+              className="mv-pill w-full max-w-sm bg-white/10 py-5"
             >
-              Começar experiência ✨
+              Começar experiência
+              <ThemeGlyph kind="sparkle" className="h-4 w-4" />
             </button>
-          </div>
 
+            {hasMusic && (
+              <p className="mt-5 flex items-center gap-2 text-sm text-(--mv-accent-soft) opacity-80">
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 fill-current">
+                  <path d="M10 3v11.3A3.5 3.5 0 1 0 12 17.5V8h6V3h-8Z" />
+                </svg>
+                Ative o som para a experiência completa
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

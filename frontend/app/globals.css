@@ -93,3 +93,211 @@ body {
     transform: scale(1.15);
   }
 }
+
+/* ==========================================================================
+   Experiência pública — sistema visual compartilhado por todos os temas
+   (redesign "Fluxo da experiência"). Nenhuma cor fixa aqui: tudo lê as
+   variáveis --mv-* aplicadas na raiz do ExperienceViewer a partir do tema
+   (experienceThemeStyle em lib/themeRegistry.ts). Prefixo mv- evita colidir
+   com o resto do produto.
+   ========================================================================== */
+
+@layer components {
+  .mv-root {
+    color: var(--mv-text);
+  }
+
+  .mv-serif {
+    font-family: var(--font-mv-serif), "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  }
+
+  /* Rótulos: sans pequena, caixa alta, letras bem espaçadas. */
+  .mv-label {
+    font-family: var(--font-geist-sans), Arial, sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--mv-accent-soft) 82%, transparent);
+  }
+
+  /* Fundos. "soft" = telas de cartão (Prévia, Mensagem); "dark" = telas
+     cósmicas (Começar, Abertura, Cena); "vivid" = memórias (Fotos). */
+  .mv-bg-soft {
+    background:
+      radial-gradient(120% 60% at 85% 45%, color-mix(in srgb, var(--mv-strong) 45%, transparent) 0%, transparent 60%),
+      linear-gradient(165deg, var(--mv-night) 0%, color-mix(in srgb, var(--mv-deep) 55%, var(--mv-night)) 50%, var(--mv-night) 100%);
+    background-color: var(--mv-night);
+  }
+
+  .mv-bg-dark {
+    background:
+      radial-gradient(70% 45% at 50% 50%, color-mix(in srgb, var(--mv-deep) 40%, transparent) 0%, transparent 70%),
+      #050206;
+  }
+
+  .mv-bg-vivid {
+    background:
+      linear-gradient(170deg, color-mix(in srgb, var(--mv-deep) 70%, var(--mv-night)) 0%, var(--mv-strong) 50%, var(--mv-secondary) 100%);
+    background-color: var(--mv-deep);
+  }
+
+  /* Cartão de vidro: branco a 8%, borda a 22%, raio 28px. */
+  .mv-glass {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 28px;
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  }
+
+  /* Botão em pílula de vidro com destaque na cor do tema. */
+  .mv-pill {
+    display: inline-flex;
+    min-height: 3rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in srgb, var(--mv-accent) 55%, transparent);
+    background: rgba(255, 255, 255, 0.1);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    padding: 0.85rem 1.75rem;
+    font-family: var(--font-geist-sans), Arial, sans-serif;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--mv-text);
+    cursor: pointer;
+    transition: transform 300ms ease, background-color 300ms ease, border-color 300ms ease;
+  }
+
+  .mv-pill:hover {
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--mv-accent) 16%, transparent);
+    border-color: var(--mv-accent);
+  }
+
+  .mv-pill:focus-visible,
+  .mv-focus:focus-visible {
+    outline: 2px solid var(--mv-accent);
+    outline-offset: 4px;
+  }
+
+  /* Divisor: duas linhas finas com o glifo do tema no meio. */
+  .mv-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--mv-accent);
+  }
+
+  .mv-divider::before,
+  .mv-divider::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: color-mix(in srgb, var(--mv-accent-soft) 35%, transparent);
+  }
+
+  /* Texto que se desfaz no fim (trecho da carta na Prévia). */
+  .mv-fade-out {
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  }
+
+  /* Entrada de texto: fade com leve subida. Atraso por elemento via
+     style={{ "--mv-delay": "400ms" }}. */
+  @keyframes mv-rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .mv-rise {
+    animation: mv-rise 900ms cubic-bezier(0.22, 1, 0.36, 1) var(--mv-delay, 0ms) both;
+  }
+
+  /* Órbita da Cena: o braço gira e os rótulos giram ao contrário para
+     continuarem na horizontal. */
+  @keyframes mv-orbit {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes mv-orbit-reverse {
+    to {
+      transform: rotate(-360deg);
+    }
+  }
+
+  .mv-orbit {
+    animation: mv-orbit 28s linear infinite;
+  }
+
+  .mv-orbit-reverse {
+    animation: mv-orbit-reverse 28s linear infinite;
+  }
+
+  /* Brilho que pulsa (estrelas, marcador do planeta). Só opacity/transform. */
+  @keyframes mv-pulse {
+    0%,
+    100% {
+      opacity: 0.55;
+      transform: scale(0.9);
+    }
+
+    50% {
+      opacity: 1;
+      transform: scale(1.12);
+    }
+  }
+
+  .mv-pulse {
+    animation: mv-pulse 3.2s ease-in-out infinite;
+  }
+
+  @keyframes mv-nudge {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+
+    50% {
+      transform: translateY(4px);
+    }
+  }
+
+  .mv-nudge {
+    animation: mv-nudge 1.8s ease-in-out infinite;
+  }
+
+  .mv-no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .mv-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mv-rise,
+    .mv-orbit,
+    .mv-orbit-reverse,
+    .mv-pulse,
+    .mv-nudge {
+      animation: none;
+    }
+  }
+}
