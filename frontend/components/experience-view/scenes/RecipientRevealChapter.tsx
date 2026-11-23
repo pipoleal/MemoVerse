@@ -103,23 +103,27 @@ export default function RecipientRevealChapter({
       >
         <ThemeOrnament kind={ornament} />
 
-        <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none">
-          <polyline
-            points={CONSTELLATION.map(([x, y]) => `${x}%,${y}%`).join(" ")}
-            fill="none"
-            stroke="var(--mv-accent-soft)"
-            strokeOpacity="0.18"
-            vectorEffect="non-scaling-stroke"
-          />
-        </svg>
-        {CONSTELLATION.map(([x, y], index) => (
-          <span
-            key={`${x}-${y}`}
-            aria-hidden="true"
-            className="mv-pulse pointer-events-none absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--mv-accent-soft) opacity-70"
-            style={{ left: `${x}%`, top: `${y}%`, animationDelay: `${index * 0.5}s` }}
-          />
-        ))}
+        {ornament !== "cherry-branch" && (
+          <>
+            <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none">
+              <polyline
+                points={CONSTELLATION.map(([x, y]) => `${x}%,${y}%`).join(" ")}
+                fill="none"
+                stroke="var(--mv-accent-soft)"
+                strokeOpacity="0.18"
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+            {CONSTELLATION.map(([x, y], index) => (
+              <span
+                key={`${x}-${y}`}
+                aria-hidden="true"
+                className="mv-pulse pointer-events-none absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--mv-accent-soft) opacity-70"
+                style={{ left: `${x}%`, top: `${y}%`, animationDelay: `${index * 0.5}s` }}
+              />
+            ))}
+          </>
+        )}
       </div>
 
       {/* Ponto de luz inicial que "abre" a cena — mantido da versão

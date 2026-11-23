@@ -21,6 +21,9 @@ type PhotoMemoryBeatProps = {
   memoryNumber: number;
   memoryCount: number;
   onNavigate: (slide: number) => void;
+  carouselNear?: boolean;
+  active?: boolean;
+  onFinish?: () => void;
   // Slug público da experiência — só o suficiente para reemitir GET
   // /public/experiences/<slug>/ e pegar uma URL assinada nova caso `src`
   // (assinada no carregamento inicial da página) já tenha expirado quando o
@@ -38,6 +41,9 @@ export default function PhotoMemoryBeat({
   memoryNumber,
   memoryCount,
   onNavigate,
+  carouselNear = false,
+  active,
+  onFinish,
   slug,
 }: PhotoMemoryBeatProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -76,13 +82,14 @@ export default function PhotoMemoryBeat({
       memoryCount={memoryCount}
       caption={caption}
       onNavigate={onNavigate}
-      isNear={isNear}
+      isNear={isNear || carouselNear}
+      onFinish={onFinish}
     >
       {/* Leve aproximação contínua (Ken Burns), só transform. */}
       <motion.div
         className="absolute inset-0"
-        animate={{ scale: [1, 1.05] }}
-        transition={{ duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
+        animate={active === false ? { scale: 1 } : { scale: [1, 1.05] }}
+        transition={active === false ? { duration: 0 } : { duration: 11, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }}
       >
         {/* Fundo: a mesma foto, ampliada e borrada, preenche a moldura
             inteira atrás da versão nítida — é ela que substitui as barras

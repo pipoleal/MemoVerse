@@ -16,7 +16,7 @@ import PlanetScene from "./scenes/PlanetScene";
 import RecipientRevealChapter from "./scenes/RecipientRevealChapter";
 import MemoriesCanvas from "./MemoriesCanvas";
 import MusicPlayer from "./MusicPlayer";
-import ThemeParticles from "./theme/ThemeParticles";
+import FallingParticles from "./theme/FallingParticles";
 
 export type ExperienceChapter =
   | "preview"
@@ -76,6 +76,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
   const [chapter, setChapter] =
     useState<ExperienceChapter>("preview");
   const [hasInteracted, setHasInteracted] = useState(false);
+  const [memoryVisible, setMemoryVisible] = useState(false);
   // Bumped by "Reviver experiência" only, to force MusicPlayer to remount so
   // its YouTube player restarts from 0 instead of resuming where it left
   // off. Nothing else needs this: every chapter block below is only
@@ -131,6 +132,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
 
   function handleRevive() {
     setHasInteracted(false);
+    setMemoryVisible(false);
     setChapter("idle");
     setReviveCount((count) => count + 1);
   }
@@ -157,15 +159,13 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
   const visual = getThemeVisual(experience.theme);
   const tokens = visual.experience;
   const hasMusic = experience.music.provider !== "none" && Boolean(experience.music.url);
+  const particleKind = tokens.particles;
+  const pinMemoriesToViewport = Boolean(tokens.scenes) && visual.code !== "flowers";
 
-  // Partículas do tema (pétalas no Flores...) em todas as telas, menos na
-  // abertura cósmica (Começar, que já tem o próprio campo de estrelas) e no
-  // encerramento WebGL.
-  const showParticles =
-    chapter === "preview" ||
-    chapter === "recipient-reveal" ||
-    chapter === "letter" ||
-    chapter === "memories";
+  // As partículas de queda persistem entre capítulos para completar o fade.
+  const particleIntensity = chapter === "preview" || chapter === "letter"
+    ? 1
+    : chapter === "memories" && memoryVisible ? 0.6 : 0;
 
   // Polimento do Preview — Problema 2: a pergunta mostrada junto da resposta
   // em LetterChapter é sempre a mesma pergunta que InformationStep já exibiu
@@ -199,7 +199,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
           playing={hasInteracted}
         />
 
-        {showParticles && <ThemeParticles kind={tokens.particles} />}
+        {particleKind && <FallingParticles kind={particleKind} intensity={particleIntensity} />}
 
         <AnimatePresence mode="sync" initial={false}>
           {chapter === "preview" && (
@@ -235,6 +235,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
               transition={CHAPTER_TRANSITION}
             >
               <PlanetScene
+                starryBackground={tokens.scenes?.startBackground}
                 onStart={() => {
                   setHasInteracted(true);
                   send("START_EXPERIENCE");
@@ -243,7 +244,7 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
                   send("SIGNATURE_COMPLETE");
                 }}
                 started={chapter === "signature-opening"}
-                hasMusic={hasMusic}
+                showSoundHint={hasMusic || visual.code === "flowers"}
               />
             </motion.div>
           )}
@@ -302,13 +303,17 @@ export default function ExperienceViewer({ experience: experienceProp, onComplet
           {chapter === "memories" && (
             <motion.div
               key="memories"
-              className="absolute inset-0"
+              // A carta pode sair ainda rolada. A Cena fica enquadrada
+              // na viewport durante o crossfade.
+              className={`${pinMemoriesToViewport ? "fixed" : "absolute"} inset-0`}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={CHAPTER_TRANSITION}
             >
               <MemoriesCanvas
+                sceneStyle={tokens.scenes}
+                onMemoryVisibilityChange={particleKind ? setMemoryVisible : undefined}
                 shortMessage={experience.shortMessage}
                 recipient={experience.recipient || "Você"}
                 eventDate={experience.eventDate}

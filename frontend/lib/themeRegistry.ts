@@ -56,13 +56,19 @@ export type ThemeVisual = {
   // do ExperienceViewer (ver experienceThemeStyle abaixo) e é consumido
   // pelas classes `.mv-*` de app/globals.css; partículas, selo da carta,
   // glifo do divisor e ornamento da Abertura são só tipos resolvidos por
-  // ThemeParticles/ThemeGlyph/ThemeOrnament.
+  // FallingParticles/ThemeGlyph/ThemeOrnament.
   experience: ExperienceThemeTokens;
 };
 
-export type ParticleKind = "petals" | "shooting-stars" | "projector-dust" | "sun-glints" | "fireflies" | "dots";
+export type ParticleKind = "petals" | "shooting-stars" | "popcorn" | "shells" | "moons";
 export type GlyphKind = "heart" | "blossom" | "star" | "sparkle" | "clapper" | "shell" | "moon" | "dot";
 export type OrnamentKind = "cherry-branch" | "crescent-moon" | "none";
+
+export type ExperienceSceneStyle = {
+  startBackground: string;
+  orbitBackground: string;
+  orbitColor: string;
+};
 
 export type ExperienceThemeTokens = {
   palette: {
@@ -83,10 +89,11 @@ export type ExperienceThemeTokens = {
     planetLight: string;
     planetDark: string;
   };
-  particles: ParticleKind;
+  particles?: ParticleKind;
   seal: GlyphKind;
   divider: GlyphKind;
   ornament: OrnamentKind;
+  scenes?: ExperienceSceneStyle;
 };
 
 export const DEFAULT_THEME_CODE = "universe";
@@ -129,6 +136,11 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       seal: "star",
       divider: "sparkle",
       ornament: "none",
+      scenes: {
+        startBackground: "mv-universe-start",
+        orbitBackground: "mv-universe-orbit",
+        orbitColor: "#DCD0FF",
+      },
     },
   },
   cinema: {
@@ -164,10 +176,15 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
         planetLight: "#E0702A",
         planetDark: "#2A1206",
       },
-      particles: "projector-dust",
+      particles: "popcorn",
       seal: "clapper",
       divider: "dot",
       ornament: "none",
+      scenes: {
+        startBackground: "mv-cinema-dark",
+        orbitBackground: "mv-cinema-dark",
+        orbitColor: "#FFCBA4",
+      },
     },
   },
   beach: {
@@ -203,10 +220,15 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
         planetLight: "#2BB3C8",
         planetDark: "#06293A",
       },
-      particles: "sun-glints",
+      particles: "shells",
       seal: "shell",
       divider: "shell",
       ornament: "none",
+      scenes: {
+        startBackground: "mv-beach-start",
+        orbitBackground: "mv-beach-orbit",
+        orbitColor: "#FFE3C4",
+      },
     },
   },
   flowers: {
@@ -246,6 +268,11 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
       seal: "heart",
       divider: "blossom",
       ornament: "cherry-branch",
+      scenes: {
+        startBackground: "mv-flowers-dark",
+        orbitBackground: "mv-flowers-dark",
+        orbitColor: "#FFC2D9",
+      },
     },
   },
   night: {
@@ -281,10 +308,15 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
         planetLight: "#3B5BA8",
         planetDark: "#070C22",
       },
-      particles: "fireflies",
+      particles: "moons",
       seal: "moon",
       divider: "moon",
       ornament: "crescent-moon",
+      scenes: {
+        startBackground: "mv-night-start",
+        orbitBackground: "mv-night-orbit",
+        orbitColor: "#FFE9A8",
+      },
     },
   },
   minimal: {
@@ -320,10 +352,14 @@ export const THEME_REGISTRY: Record<string, ThemeVisual> = {
         planetLight: "#5A5A66",
         planetDark: "#0E0E12",
       },
-      particles: "dots",
       seal: "dot",
       divider: "dot",
       ornament: "none",
+      scenes: {
+        startBackground: "mv-minimal-start",
+        orbitBackground: "mv-minimal-orbit",
+        orbitColor: "#F6F4FF",
+      },
     },
   },
 };

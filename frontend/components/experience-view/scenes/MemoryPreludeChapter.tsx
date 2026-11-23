@@ -1,6 +1,9 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import type { ExperienceSceneStyle } from "@/lib/themeRegistry";
+import StarField from "../StarField";
+import MemoryOrbit from "./MemoryOrbit";
 
 type MemoryPreludeChapterProps = {
   message?: string;
@@ -11,6 +14,9 @@ type MemoryPreludeChapterProps = {
   // Sem nenhuma foto/vídeo não há o que rolar (MemoriesCanvas avança
   // sozinho), então a dica "Role para ver as memórias" não aparece.
   hasMedia: boolean;
+  sceneStyle?: ExperienceSceneStyle;
+  active?: boolean;
+  onContinue?: () => void;
 };
 
 const defaultPreludeMessage =
@@ -30,14 +36,23 @@ export default function MemoryPreludeChapter({
   recipient,
   eventDate,
   hasMedia,
+  sceneStyle,
+  active = true,
+  onContinue,
 }: MemoryPreludeChapterProps) {
   const year = /^\d{4}/.exec(eventDate ?? "")?.[0];
 
   return (
     <section
       aria-label="O começo da nossa história"
-      className="mv-bg-dark relative isolate flex flex-1 flex-col items-center overflow-hidden px-6 pb-8 pt-[10vh] text-center"
+      className={`relative isolate flex flex-1 flex-col items-center overflow-hidden px-6 pb-8 text-center ${sceneStyle ? `${sceneStyle.orbitBackground} pt-[min(10vh,4rem)]` : "mv-bg-dark pt-[10vh]"}`}
     >
+      {sceneStyle ? (
+        <>
+          <StarField subtle paused={!active} />
+          <MemoryOrbit year={year} recipient={recipient} active={active} color={sceneStyle.orbitColor} />
+        </>
+      ) : <>
       <div
         aria-hidden="true"
         className="pointer-events-none absolute left-1/2 top-[38%] -z-10 h-[130vw] max-h-[60rem] w-[130vw] max-w-[60rem] -translate-x-1/2 -translate-y-1/2 rounded-full"
@@ -86,23 +101,37 @@ export default function MemoryPreludeChapter({
           <OrbitStar position="bottom" label="você" color="#ffffff" />
         </div>
       </div>
+      </>}
 
       <p
-        className="mv-serif mv-rise mt-10 max-w-md whitespace-pre-wrap wrap-anywhere text-[1.45rem] leading-[1.6] text-(--mv-text) sm:text-[1.65rem]"
+        className={`mv-orbit-caption mv-serif mv-rise max-w-md whitespace-pre-wrap wrap-anywhere text-[1.45rem] leading-[1.6] text-(--mv-text) sm:text-[1.65rem] ${sceneStyle ? "mt-4" : "mt-10"}`}
         style={delay(500)}
       >
         {message || defaultPreludeMessage}
       </p>
 
-      {hasMedia && (
+      {hasMedia && onContinue && (
+        <button type="button" onClick={onContinue} className="mv-focus mv-rise mt-auto flex shrink-0 flex-col items-center gap-3 rounded-xl px-2 pt-6" style={delay(1300)}>
+          <ScrollHint />
+        </button>
+      )}
+      {hasMedia && !onContinue && (
         <p className="mv-rise mt-auto flex flex-col items-center gap-3 pt-10" style={delay(1300)}>
-          <span className="mv-label">Role para ver as memórias</span>
-          <svg viewBox="0 0 24 24" aria-hidden="true" className="mv-nudge h-5 w-5 text-(--mv-accent)">
-            <path d="m6 6 6 6 6-6M6 12l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
+          <ScrollHint />
         </p>
       )}
     </section>
+  );
+}
+
+function ScrollHint() {
+  return (
+    <>
+      <span className="mv-label">Role para ver as memórias</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="mv-nudge h-5 w-5 text-(--mv-accent)">
+        <path d="m6 6 6 6 6-6M6 12l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </>
   );
 }
 

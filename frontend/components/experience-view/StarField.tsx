@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useReducedMotion } from "framer-motion";
 
 type StarFieldPhase =
   | "idle"
@@ -10,6 +11,8 @@ type StarFieldPhase =
 
 type StarFieldProps = {
   phase?: StarFieldPhase;
+  subtle?: boolean;
+  paused?: boolean;
 };
 
 type StarData = {
@@ -112,30 +115,21 @@ function createStars(): StarData[] {
   );
 }
 
+const STARS = createStars();
+const SUBTLE_STARS = STARS.slice(0, 55);
+
 export default function StarField({
   phase = "idle",
+  subtle = false,
+  paused = false,
 }: StarFieldProps) {
-  const stars = useRef<StarData[] | null>(
-    null
-  );
-
-  const containerRef =
-    useRef<HTMLDivElement | null>(null);
+  const stars = subtle ? SUBTLE_STARS : STARS;
+  const reduceMotion = useReducedMotion();
 
   const starRefs =
     useRef<(HTMLSpanElement | null)[]>(
       []
     );
-
-  /*
-   * Criamos as estrelas apenas uma vez.
-   *
-   * Isso evita que as posições mudem
-   * quando o React renderizar novamente.
-   */
-  if (!stars.current) {
-    stars.current = createStars();
-  }
 
   /*
    * ========================================
@@ -166,6 +160,8 @@ export default function StarField({
       );
     });
 
+    if (paused || (subtle && reduceMotion)) return;
+
     /*
      * ========================================
      * IDLE
@@ -179,15 +175,14 @@ export default function StarField({
             return;
           }
 
-          const star =
-            stars.current?.[index];
+          const star = stars[index];
 
           if (!star) {
             return;
           }
 
           element.style.opacity =
-            "0.45";
+            subtle ? "0.28" : "0.45";
 
           element.style.transform =
             "translate3d(0, 0, 0)";
@@ -198,24 +193,24 @@ export default function StarField({
           element.animate(
             [
               {
-                opacity: 0.25,
+                opacity: subtle ? 0.12 : 0.25,
                 transform:
                   "scale(0.8)",
               },
               {
-                opacity: 0.75,
+                opacity: subtle ? 0.42 : 0.75,
                 transform:
                   "scale(1.35)",
               },
               {
-                opacity: 0.25,
+                opacity: subtle ? 0.12 : 0.25,
                 transform:
                   "scale(0.8)",
               },
             ],
             {
               duration:
-                1800 +
+                (subtle ? 4200 : 1800) +
                 star.delay * 2,
               delay:
                 star.delay,
@@ -247,8 +242,7 @@ export default function StarField({
             return;
           }
 
-          const star =
-            stars.current?.[index];
+          const star = stars[index];
 
           if (!star) {
             return;
@@ -331,8 +325,7 @@ export default function StarField({
             return;
           }
 
-          const star =
-            stars.current?.[index];
+          const star = stars[index];
 
           if (!star) {
             return;
@@ -418,8 +411,7 @@ export default function StarField({
             return;
           }
 
-          const star =
-            stars.current?.[index];
+          const star = stars[index];
 
           if (!star) {
             return;
@@ -495,11 +487,11 @@ export default function StarField({
         }
       );
     }
-  }, [phase]);
+  }, [paused, phase, reduceMotion, stars, subtle]);
 
   return (
     <div
-      ref={containerRef}
+      aria-hidden="true"
       className="
         pointer-events-none
         absolute
@@ -507,7 +499,7 @@ export default function StarField({
         overflow-hidden
       "
     >
-      {stars.current.map(
+      {stars.map(
         (star, index) => (
           <span
             key={index}
@@ -515,20 +507,20 @@ export default function StarField({
               starRefs.current[index] =
                 element;
             }}
-            className="
+            className={`
               absolute
               rounded-full
               bg-white
-              will-change-transform
-            "
+              ${subtle ? "" : "will-change-transform"}
+            `}
             style={{
               left: `${star.left}%`,
               top: `${star.top}%`,
               width: `${star.size}px`,
               height: `${star.size}px`,
-              opacity: 0.45,
+              opacity: subtle ? 0.28 : 0.45,
               boxShadow:
-                star.size >= 2
+                !subtle && star.size >= 2
                   ? "0 0 8px 2px rgba(255,255,255,0.35)"
                   : "none",
             }}

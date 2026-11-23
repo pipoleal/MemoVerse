@@ -17,18 +17,20 @@ type StarFieldPhase =
   | "converge";
 
 type PlanetSceneProps = {
+  starryBackground?: string;
   onStart: () => void;
   onStarsComplete?: () => void;
   started?: boolean;
   // Só mostra "Ative o som..." quando há de fato uma música configurada.
-  hasMusic?: boolean;
+  showSoundHint?: boolean;
 };
 
 export default function PlanetScene({
+  starryBackground,
   onStart,
   onStarsComplete,
   started = false,
-  hasMusic = false,
+  showSoundHint = false,
 }: PlanetSceneProps) {
   const [showPhrase, setShowPhrase] =
     useState(false);
@@ -111,6 +113,12 @@ export default function PlanetScene({
    */
 
   function handleStart() {
+    if (starryBackground && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      onStart();
+      onStarsComplete?.();
+      return;
+    }
+
     /*
      * FASE 1
      *
@@ -163,21 +171,21 @@ export default function PlanetScene({
   }
 
   return (
-    <section className="mv-bg-dark relative min-h-screen w-full overflow-hidden">
+    <section className={`relative min-h-screen w-full overflow-hidden ${starryBackground ?? "mv-bg-dark"}`}>
 
       {/* =========================================
           ESTRELAS
           ========================================= */}
 
       <div className="pointer-events-none absolute inset-0 z-0">
-        <StarField phase={starPhase} />
+        <StarField phase={starPhase} subtle={Boolean(starryBackground)} />
       </div>
 
       {/* =========================================
           PLANETA DO TEMA
           ========================================= */}
 
-      <div
+      {!starryBackground && <div
         className={`
           pointer-events-none
           absolute
@@ -203,7 +211,7 @@ export default function PlanetScene({
         <div className="aspect-[520/460] h-full max-h-[27rem] max-w-full">
           <ThemePlanet />
         </div>
-      </div>
+      </div>}
 
       {/* =========================================
           CONTEÚDO INICIAL
@@ -230,21 +238,24 @@ export default function PlanetScene({
       >
         <div className="flex w-full max-w-lg flex-col items-center px-6 text-center">
           {showPhrase && (
-            <p className="mv-serif mv-rise text-[min(2.35rem,5.4vh)] leading-[1.15] text-(--mv-text) sm:text-[min(2.85rem,5.4vh)]">
-              Toda memória
-              <br />
-              se transforma em uma
-              <br />
-              <span className="inline-flex items-center gap-3 italic text-(--mv-gold)">
-                estrela.
-                <ThemeGlyph kind="sparkle" className="mv-pulse h-7 w-7" />
-              </span>
-            </p>
+            <div className={starryBackground ? "pointer-events-none absolute inset-0 grid place-items-center px-6" : undefined}>
+              <p className="mv-serif mv-rise text-[min(2.35rem,5.4vh)] leading-[1.15] text-(--mv-text) sm:text-[min(2.85rem,5.4vh)]">
+                Toda memória
+                <br />
+                se transforma em uma
+                <br />
+                <span className="inline-flex items-center gap-3 italic text-(--mv-gold)">
+                  estrela.
+                  <ThemeGlyph kind="sparkle" className="mv-pulse h-7 w-7" />
+                </span>
+              </p>
+            </div>
           )}
 
           <div
             className={`
               mt-[min(2.5rem,4vh)]
+              relative
               flex
               w-full
               flex-col
@@ -269,7 +280,7 @@ export default function PlanetScene({
               <ThemeGlyph kind="sparkle" className="h-4 w-4" />
             </button>
 
-            {hasMusic && (
+            {showSoundHint && (
               <p className="mt-5 flex items-center gap-2 text-sm text-(--mv-accent-soft) opacity-80">
                 <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 fill-current">
                   <path d="M10 3v11.3A3.5 3.5 0 1 0 12 17.5V8h6V3h-8Z" />

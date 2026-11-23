@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useInViewport } from "@/lib/useInViewport";
 import { fetchPublicExperience, toExperience } from "@/lib/publicExperience";
@@ -18,6 +18,9 @@ type VideoMemoryBeatProps = {
   memoryNumber: number;
   memoryCount: number;
   onNavigate: (slide: number) => void;
+  carouselNear?: boolean;
+  active?: boolean;
+  onFinish?: () => void;
   // Ver o mesmo parâmetro em PhotoMemoryBeat.tsx — usado aqui pela mesma
   // razão (renovar a URL assinada se ela expirar antes do clique em play).
   slug?: string;
@@ -30,6 +33,9 @@ export default function VideoMemoryBeat({
   memoryNumber,
   memoryCount,
   onNavigate,
+  carouselNear = false,
+  active,
+  onFinish,
   slug,
 }: VideoMemoryBeatProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -85,7 +91,8 @@ export default function VideoMemoryBeat({
       memoryCount={memoryCount}
       caption={caption}
       onNavigate={onNavigate}
-      isNear={isNear}
+      isNear={isNear || carouselNear}
+      onFinish={onFinish}
       hideCounter={hasStarted}
     >
       {/* object-contain (em vez de object-cover): vídeo vertical gravado no
@@ -94,6 +101,9 @@ export default function VideoMemoryBeat({
           controls só aparece depois do primeiro clique — antes disso o
           botão de play abaixo é o único controle visível, pra não duplicar
           (nosso botão + o de play nativo). */}
+      {active !== undefined ? (
+        <CarouselVideo src={currentSrc} active={active} onError={handleVideoError} />
+      ) : <>
       <video
         ref={videoRef}
         src={currentSrc}
@@ -119,6 +129,60 @@ export default function VideoMemoryBeat({
           </span>
         </button>
       )}
+      </>}
     </MemoryFrame>
+  );
+}
+
+function CarouselVideo({ src, active, onError }: { src: string; active: boolean; onError: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [hasSound, setHasSound] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current!;
+    video.muted = true;
+    if (active) void video.play().catch(() => {});
+    return () => {
+      video.pause();
+    };
+  }, [active, src]);
+
+  function toggleSound() {
+    const video = videoRef.current!;
+    video.muted = video.paused ? false : !video.muted;
+    if (video.paused) void video.play().catch(() => {});
+  }
+
+  const label = playing ? (hasSound ? "Silenciar vídeo" : "Ativar som do vídeo") : "Reproduzir vídeo com som";
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        src={src}
+        loop
+        playsInline
+        muted={!hasSound}
+        preload="metadata"
+        onError={onError}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onVolumeChange={(event) => setHasSound(!event.currentTarget.muted)}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
+      <button type="button" onClick={toggleSound} aria-label={label} className="mv-focus absolute inset-0">
+        <span className={`pointer-events-none absolute flex items-center justify-center rounded-full border border-white/25 bg-black/50 text-white backdrop-blur-sm ${playing ? "right-4 top-4 h-9 w-9" : "left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2"}`}>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor" className={playing ? "h-5 w-5" : "h-7 w-7"}>
+            {playing ? (
+              <>
+                <path d="M3 9h4l5-4v14l-5-4H3z" />
+                <path d={hasSound ? "M15 9a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10" : "m16 10 4 4m0-4-4 4"} stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+              </>
+            ) : <path d="M8 5v14l11-7z" />}
+          </svg>
+        </span>
+      </button>
+    </>
   );
 }

@@ -14,6 +14,7 @@ type MemoryFrameProps = {
   ariaLabel: string;
   // Rola o MemoriesCanvas até o slide `slide` (0 = Cena, 1 = 1ª memória).
   onNavigate: (slide: number) => void;
+  onFinish?: () => void;
   // false até a memória chegar perto da tela (lazy mount em
   // Photo/VideoMemoryBeat) — a moldura e a legenda só montam depois.
   isNear: boolean;
@@ -35,10 +36,11 @@ function pad(value: number) {
 // contador "01 / 05", legenda em cartão de vidro, pontos de navegação e
 // "Deslize para a próxima" / "Fim das memórias".
 const MemoryFrame = forwardRef<HTMLElement, MemoryFrameProps>(function MemoryFrame(
-  { memoryNumber, memoryCount, caption, ariaLabel, onNavigate, isNear, hideCounter = false, children },
+  { memoryNumber, memoryCount, caption, ariaLabel, onNavigate, onFinish, isNear, hideCounter = false, children },
   ref
 ) {
   const isLast = memoryNumber === memoryCount - 1;
+  const horizontal = Boolean(onFinish);
 
   return (
     <section
@@ -60,8 +62,8 @@ const MemoryFrame = forwardRef<HTMLElement, MemoryFrameProps>(function MemoryFra
       {isNear && (
         <>
           <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            whileInView={{ opacity: 1, scale: 1 }}
+            initial={horizontal ? false : { opacity: 0, scale: 0.96 }}
+            whileInView={horizontal ? undefined : { opacity: 1, scale: 1 }}
             viewport={{ once: true, amount: 0.3 }}
             transition={{ duration: 0.8, ease: "easeOut" }}
             className="relative mt-5 min-h-[16rem] w-full max-w-md flex-1 overflow-hidden rounded-[28px] border border-white/25 bg-black/30 shadow-[0_30px_80px_rgba(0,0,0,0.4)]"
@@ -81,8 +83,8 @@ const MemoryFrame = forwardRef<HTMLElement, MemoryFrameProps>(function MemoryFra
               moldura para fora da tela. */}
           {caption && (
             <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              whileInView={{ opacity: 1, y: 0 }}
+              initial={horizontal ? false : { opacity: 0, y: 10 }}
+              whileInView={horizontal ? undefined : { opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.4 }}
               transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
               className="mv-glass mt-5 max-h-36 w-full max-w-md overflow-y-auto rounded-[24px] px-6 py-4 text-center"
@@ -116,15 +118,24 @@ const MemoryFrame = forwardRef<HTMLElement, MemoryFrameProps>(function MemoryFra
         </div>
       )}
 
-      {isLast ? (
+      {isLast && onFinish ? (
+        <button type="button" onClick={onFinish} className="mv-label mv-focus mt-3 rounded-full px-3 py-2">
+          Fim das memórias
+        </button>
+      ) : isLast ? (
         <p className="mv-label mt-3 py-2">Fim das memórias</p>
       ) : (
         <button
           type="button"
           onClick={() => onNavigate(memoryNumber + 2)}
-          className="mv-label mv-focus mt-3 rounded-full px-3 py-2"
+          className="mv-label mv-focus mt-3 flex items-center gap-2 rounded-full px-3 py-2"
         >
-          Deslize para a próxima
+          {horizontal ? "Deslize para o lado" : "Deslize para a próxima"}
+          {horizontal && (
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="mv-nudge-right h-4 w-4 text-(--mv-accent)">
+              <path d="M4 12h15m-6-6 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </button>
       )}
     </section>

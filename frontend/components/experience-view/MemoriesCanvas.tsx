@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useIsPresent } from "framer-motion";
 
 import MemoryPreludeChapter from "./scenes/MemoryPreludeChapter";
+import MemoryCarousel from "./MemoryCarousel";
 import PhotoMemoryBeat from "./PhotoMemoryBeat";
 import VideoMemoryBeat from "./VideoMemoryBeat";
 import { useInViewport } from "@/lib/useInViewport";
+import type { ExperienceSceneStyle } from "@/lib/themeRegistry";
 import type { PhotoMemory, VideoMemory } from "@/components/experience/types";
 
 type MemoriesCanvasProps = {
@@ -21,6 +24,8 @@ type MemoriesCanvasProps = {
   // PhotoMemoryBeat/VideoMemoryBeat simplesmente não tentam renovar a URL
   // assinada se ela expirar (ver o comentário sobre isso em ambos).
   slug?: string;
+  sceneStyle?: ExperienceSceneStyle;
+  onMemoryVisibilityChange?: (visible: boolean) => void;
   onComplete: () => void;
 };
 
@@ -41,13 +46,20 @@ export default function MemoriesCanvas({
   photos,
   videos,
   slug,
+  sceneStyle,
+  onMemoryVisibilityChange,
   onComplete,
 }: MemoriesCanvasProps) {
   const hasMedia = photos.length > 0 || videos.length > 0;
   const memoryCount = photos.length + videos.length;
   const completedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const carouselRef = useRef<HTMLDivElement | null>(null);
   const [activeSlide, setActiveSlide] = useState(0);
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const showCarousel = Boolean(sceneStyle) && hasMedia;
+  const isPresent = useIsPresent();
+  const memoryVisible = activeSlide > 0;
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const { isInView: sentinelReached } = useInViewport<HTMLDivElement>(
@@ -55,24 +67,29 @@ export default function MemoriesCanvas({
     sentinelRef
   );
 
+  const complete = useCallback(() => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    onComplete();
+  }, [onComplete]);
+
+  useEffect(() => {
+    if (showCarousel) onMemoryVisibilityChange?.(memoryVisible);
+  }, [showCarousel, memoryVisible, onMemoryVisibilityChange]);
+
   // Sem nenhuma mídia: não há o que rolar, então avança sozinho.
   useEffect(() => {
     if (completedRef.current || hasMedia) return;
 
-    const timer = window.setTimeout(() => {
-      completedRef.current = true;
-      onComplete();
-    }, EMPTY_MEMORIES_DELAY);
+    const timer = window.setTimeout(complete, EMPTY_MEMORIES_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [hasMedia, onComplete]);
+  }, [complete, hasMedia]);
 
   // Com mídia: avança quando a sentinela do fim do scroll entra em viewport.
   useEffect(() => {
-    if (completedRef.current || !hasMedia || !sentinelReached) return;
-    completedRef.current = true;
-    onComplete();
-  }, [hasMedia, sentinelReached, onComplete]);
+    if (hasMedia && sentinelReached) complete();
+  }, [complete, hasMedia, sentinelReached]);
 
   // Slide atual, só para o indicador lateral da Cena — calculado a partir
   // do scrollTop (um setState só quando muda), nunca um observer por slide.
@@ -85,7 +102,12 @@ export default function MemoriesCanvas({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (!container) return;
-        setActiveSlide(Math.round(container.scrollTop / Math.max(container.clientHeight, 1)));
+        const carousel = carouselRef.current;
+        if (carousel) {
+          setActiveSlide(container.scrollTop + container.clientHeight / 2 >= carousel.offsetTop ? 1 : 0);
+        } else {
+          setActiveSlide(Math.round(container.scrollTop / Math.max(container.clientHeight, 1)));
+        }
       });
     }
 
@@ -100,51 +122,104 @@ export default function MemoriesCanvas({
   // lateral) — mesmo destino que o deslize do dedo.
   const goToSlide = useCallback((slide: number) => {
     const container = scrollRef.current;
-    const target = container?.querySelector<HTMLElement>(`[data-mv-slide="${slide}"]`);
+    const target = showCarousel && slide > 0
+      ? carouselRef.current
+      : container?.querySelector<HTMLElement>(`[data-mv-slide="${slide}"]`);
     if (!container || !target) return;
+
+    if (showCarousel && slide > 0) {
+      setCarouselIndex(slide - 1);
+      if (memoryVisible) return;
+    }
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     container.scrollTo({ top: target.offsetTop, behavior: reduceMotion ? "auto" : "smooth" });
-  }, []);
+  }, [memoryVisible, showCarousel]);
+
+  const slideClass = showCarousel
+    ? "mv-no-scrollbar flex h-full min-w-0 flex-[0_0_100%] touch-pan-y flex-col overflow-y-auto"
+    : SLIDE_CLASS;
+  const slides = [
+    ...photos.map((photo, index) => (
+      <div
+        key={`photo-${index}`}
+        data-mv-slide={index + 1}
+        className={slideClass}
+        inert={showCarousel && (!memoryVisible || carouselIndex !== index)}
+      >
+        <PhotoMemoryBeat
+          src={photo.url}
+          caption={photo.caption}
+          index={index}
+          memoryNumber={index}
+          memoryCount={memoryCount}
+          onNavigate={goToSlide}
+          carouselNear={showCarousel && Math.abs(carouselIndex - index) <= 1}
+          active={showCarousel ? memoryVisible && carouselIndex === index : undefined}
+          onFinish={showCarousel ? complete : undefined}
+          slug={slug}
+        />
+      </div>
+    )),
+    ...videos.map((video, index) => {
+      const number = photos.length + index;
+      return (
+        <div
+          key={`video-${index}`}
+          data-mv-slide={number + 1}
+          className={slideClass}
+          inert={showCarousel && (!memoryVisible || carouselIndex !== number)}
+        >
+          <VideoMemoryBeat
+            src={video.url}
+            caption={video.caption}
+            index={index}
+            memoryNumber={number}
+            memoryCount={memoryCount}
+            onNavigate={goToSlide}
+            carouselNear={showCarousel && Math.abs(carouselIndex - number) <= 1}
+            active={showCarousel ? isPresent && memoryVisible && carouselIndex === number : undefined}
+            onFinish={showCarousel ? complete : undefined}
+            slug={slug}
+          />
+        </div>
+      );
+    }),
+  ];
 
   return (
     <div className="absolute inset-0">
       <div ref={scrollRef} className="mv-no-scrollbar absolute inset-0 snap-y snap-mandatory overflow-y-auto overflow-x-hidden bg-(--mv-night)">
         <div data-mv-slide={0} className={SLIDE_CLASS}>
-          <MemoryPreludeChapter message={shortMessage} recipient={recipient} eventDate={eventDate} hasMedia={hasMedia} />
+          <MemoryPreludeChapter
+            message={shortMessage}
+            recipient={recipient}
+            eventDate={eventDate}
+            hasMedia={hasMedia}
+            sceneStyle={sceneStyle}
+            active={isPresent && !memoryVisible}
+            onContinue={showCarousel ? () => goToSlide(1) : undefined}
+          />
         </div>
 
-        {photos.map((photo, index) => (
-          <div key={`photo-${index}`} data-mv-slide={index + 1} className={SLIDE_CLASS}>
-            <PhotoMemoryBeat
-              src={photo.url}
-              caption={photo.caption}
-              index={index}
-              memoryNumber={index}
-              memoryCount={memoryCount}
-              onNavigate={goToSlide}
-              slug={slug}
-            />
+        {showCarousel ? (
+          <div ref={carouselRef} className="h-full snap-start snap-always">
+            <MemoryCarousel index={carouselIndex} count={memoryCount} active={isPresent && memoryVisible} onNavigate={goToSlide}>
+              {slides}
+            </MemoryCarousel>
           </div>
-        ))}
-
-        {videos.map((video, index) => (
-          <div key={`video-${index}`} data-mv-slide={photos.length + index + 1} className={SLIDE_CLASS}>
-            <VideoMemoryBeat
-              src={video.url}
-              caption={video.caption}
-              index={index}
-              memoryNumber={photos.length + index}
-              memoryCount={memoryCount}
-              onNavigate={goToSlide}
-              slug={slug}
-            />
-          </div>
-        ))}
+        ) : slides}
 
         {/* snap-end: com snap obrigatório, a sentinela também precisa ser
             um ponto de encaixe, senão o scroll nunca chegaria até ela. */}
-        {hasMedia && <div ref={sentinelRef} aria-hidden="true" className="h-24 w-full snap-end" />}
+        {hasMedia && (
+          <div
+            ref={sentinelRef}
+            aria-hidden="true"
+            hidden={showCarousel && carouselIndex !== memoryCount - 1}
+            className="h-24 w-full snap-end"
+          />
+        )}
       </div>
 
       {/* Indicador lateral da Cena (um ponto por tela) — some ao entrar nas

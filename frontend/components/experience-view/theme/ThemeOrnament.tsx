@@ -6,16 +6,26 @@ type ThemeOrnamentProps = {
   kind: OrnamentKind;
 };
 
-// Enfeite do canto superior da Abertura (galho de cerejeira no Flores, lua
-// na Noite). "none" não renderiza nada — temas sem ornamento próprio ficam
-// só com a constelação, que é comum a todos.
+function CherryBlossom({ x, y, size, index }: { x: number; y: number; size: number; index: number }) {
+  return (
+    <svg x={x - size / 2} y={y - size / 2} width={size} height={size} viewBox="0 0 24 24" overflow="visible">
+      <g
+        className="mv-flower-blossom"
+        style={{ animationDuration: `${4 + index * 0.7}s`, animationDelay: `${-index * 1.3}s` }}
+      >
+        {renderGlyph("blossom")}
+      </g>
+    </svg>
+  );
+}
+
 export default function ThemeOrnament({ kind }: ThemeOrnamentProps) {
   if (kind === "cherry-branch") {
     return (
       <svg
         viewBox="0 0 400 220"
         aria-hidden="true"
-        className="pointer-events-none absolute -right-4 top-0 w-[72%] max-w-md"
+        className="mv-flower-branch pointer-events-none absolute -right-4 top-0 w-[72%] max-w-md overflow-visible"
       >
         <path
           d="M8 210C60 150 110 120 170 95s120-40 160-60 70-30 70-30"
@@ -24,22 +34,20 @@ export default function ThemeOrnament({ kind }: ThemeOrnamentProps) {
           strokeWidth="7"
           strokeLinecap="round"
         />
-        <path d="M230 70c10-20 30-30 50-30" fill="none" stroke="#3a1424" strokeWidth="4" strokeLinecap="round" />
+        <g className="mv-flower-twig" style={{ transformOrigin: "230px 70px", animationDelay: "-0.8s" }}>
+          <path d="M230 70c10-20 30-30 50-30" fill="none" stroke="#3a1424" strokeWidth="4" strokeLinecap="round" />
+          <CherryBlossom x={262} y={34} size={26} index={4} />
+        </g>
+        <g className="mv-flower-twig" style={{ transformOrigin: "343px 28px", animationDelay: "-2.8s" }}>
+          <path d="M343 28q-9 13-25 18" fill="none" stroke="#3a1424" strokeWidth="3" strokeLinecap="round" />
+          <CherryBlossom x={318} y={46} size={42} index={3} />
+        </g>
         {[
           [24, 188, 34],
           [118, 118, 44],
           [212, 78, 54],
-          [318, 46, 42],
-          [262, 34, 26],
         ].map(([x, y, size], index) => (
-          <svg key={`${x}-${y}`} x={x - size / 2} y={y - size / 2} width={size} height={size} viewBox="0 0 24 24">
-            <g
-              className="mv-pulse"
-              style={{ transformBox: "fill-box", transformOrigin: "center", animationDelay: `${index * 0.6}s` }}
-            >
-              {renderGlyph("blossom")}
-            </g>
-          </svg>
+          <CherryBlossom key={`${x}-${y}`} x={x} y={y} size={size} index={index} />
         ))}
       </svg>
     );
